@@ -1,0 +1,46 @@
+{
+  "name": "E. coli Inpatient Analysis",
+  "description": "E. coli, first isolates, inpatient only, 2019-2023",
+  "filters": [
+    {
+      "column": "Pathogen",
+      "operator": "equals",
+      "value": "Escherichia coli"
+    },
+    {
+      "column": "CSQ",
+      "operator": "equals",
+      "value": "Erstisolat"
+    },
+    {
+        "column": "ARS_WardType",
+        "operator": "in",
+        "values": ["Normal Ward", "Intensive Care Unit", "Outpatient"]
+    },
+    {
+      "column": "CareType",
+      "operator": "in",
+      "values": ["In-Patient", "Out-Patient"]
+    },
+    {
+      "column": "Year",
+      "operator": "range",
+      "min": 2019,
+      "max": 2023
+    },
+    {
+      "column": "TotalAntibioticsTested",
+      "operator": "gte",
+      "value": 3
+    },
+    {
+      "column": "IsSpecificlyExcluded_Screening",
+      "operator": "is_false"
+    },
+    {
+      "column": "IsSpecificlyExcluded_Pathogen",
+      "operator": "is_false"
+    }
+  ],
+  "verbose": true
+}

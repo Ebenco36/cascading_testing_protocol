@@ -1,0 +1,127 @@
+<html>
+    <head>
+        <meta charset="utf-8">
+        
+            <script src="lib/bindings/utils.js"></script>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/dist/vis-network.min.css" integrity="sha512-WgxfT5LWjfszlPHXRmBWHkV2eceiWTOBvrKCNbdgDYTHrT2AeLCGbF4sZlZw3UMN3WtL0tGUoIAKsu8mllg/XA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/vis-network/9.1.2/dist/vis-network.min.js" integrity="sha512-LnvoEWDFrqGHlHmDD2101OrLcbsfkrzoSpvtSQtxK3RMnRV0eOkhhBN2dXHKRrUU8p2DGRTk35n4O8nWSVe1mQ==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+            
+        
+<center>
+<h1></h1>
+</center>
+
+<!-- <link rel="stylesheet" href="../node_modules/vis/dist/vis.min.css" type="text/css" />
+<script type="text/javascript" src="../node_modules/vis/dist/vis.js"> </script>-->
+        <link
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/css/bootstrap.min.css"
+          rel="stylesheet"
+          integrity="sha384-eOJMYsd53ii+scO/bJGFsiCZc+5NDVN2yr8+0RDqr0Ql0h+rP48ckxlpbzKgwra6"
+          crossorigin="anonymous"
+        />
+        <script
+          src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.0-beta3/dist/js/bootstrap.bundle.min.js"
+          integrity="sha384-JEW9xMcG8R+pH31jmWH6WWP0WintQrMb4s7ZOdauHnUtxwoG2vI5DkLtS3qm9Ekf"
+          crossorigin="anonymous"
+        ></script>
+
+
+        <center>
+          <h1></h1>
+        </center>
+        <style type="text/css">
+
+             #mynetwork {
+                 width: 100%;
+                 height: 900px;
+                 background-color: #ffffff;
+                 border: 1px solid lightgray;
+                 position: relative;
+                 float: left;
+             }
+
+             
+
+             
+
+             
+        </style>
+    </head>
+
+
+    <body>
+        <div class="card" style="width: 100%">
+            
+            
+            <div id="mynetwork" class="card-body"></div>
+        </div>
+
+        
+        
+
+        <script type="text/javascript">
+
+              // initialize global variables.
+              var edges;
+              var nodes;
+              var allNodes;
+              var allEdges;
+              var nodeColors;
+              var originalNodes;
+              var network;
+              var container;
+              var options, data;
+              var filter = {
+                  item : '',
+                  property : '',
+                  value : []
+              };
+
+              
+
+              
+
+              // This method is responsible for drawing the graph, returns the drawn network
+              function drawGraph() {
+                  var container = document.getElementById('mynetwork');
+
+                  
+
+                  // parsing and collecting nodes and edges from the python
+                  nodes = new vis.DataSet([{"color": "#EF6C00", "font": {"color": "#111111"}, "id": "CIP__R", "label": "CIP (R)", "shape": "dot", "title": "CIP (R)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Fluoroquinolone"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "CTX__R", "label": "CTX (R)", "shape": "dot", "title": "CTX (R)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Third-gen cephalosporin (\u03b2-lactam)"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "VAN__R", "label": "VAN (R)", "shape": "dot", "title": "VAN (R)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Glycopeptide"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "MER__R", "label": "MER (R)", "shape": "dot", "title": "MER (R)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Carbapenem (\u03b2-lactam)"}, {"color": "#C62828", "font": {"color": "#111111"}, "id": "LIZ__R", "label": "LIZ (R)", "shape": "dot", "title": "LIZ (R)\u003cbr\u003eAWaRe: Reserve\u003cbr\u003eClass: Oxazolidinone"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "CRO__R", "label": "CRO (R)", "shape": "dot", "title": "CRO (R)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Third-gen cephalosporin (\u03b2-lactam)"}, {"color": "#2E7D32", "font": {"color": "#111111"}, "id": "AMC__R", "label": "AMC (R)", "shape": "dot", "title": "AMC (R)\u003cbr\u003eAWaRe: Access\u003cbr\u003eClass: \u03b2-lactam/\u03b2-lactamase inhibitor"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "PIP__R", "label": "PIP (R)", "shape": "dot", "title": "PIP (R)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Penicillin (\u03b2-lactam)"}, {"color": "#2E7D32", "font": {"color": "#111111"}, "id": "AMP__R", "label": "AMP (R)", "shape": "dot", "title": "AMP (R)\u003cbr\u003eAWaRe: Access\u003cbr\u003eClass: Penicillin (\u03b2-lactam)"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "PIT__R", "label": "PIT (R)", "shape": "dot", "title": "PIT (R)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: \u03b2-lactam/\u03b2-lactamase inhibitor"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "MER__T", "label": "MER (T)", "shape": "dot", "title": "MER (T)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Carbapenem (\u03b2-lactam)"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "CTX__T", "label": "CTX (T)", "shape": "dot", "title": "CTX (T)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Third-gen cephalosporin (\u03b2-lactam)"}, {"color": "#C62828", "font": {"color": "#111111"}, "id": "LIZ__T", "label": "LIZ (T)", "shape": "dot", "title": "LIZ (T)\u003cbr\u003eAWaRe: Reserve\u003cbr\u003eClass: Oxazolidinone"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "CIP__T", "label": "CIP (T)", "shape": "dot", "title": "CIP (T)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Fluoroquinolone"}, {"color": "#2E7D32", "font": {"color": "#111111"}, "id": "AMC__T", "label": "AMC (T)", "shape": "dot", "title": "AMC (T)\u003cbr\u003eAWaRe: Access\u003cbr\u003eClass: \u03b2-lactam/\u03b2-lactamase inhibitor"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "VAN__T", "label": "VAN (T)", "shape": "dot", "title": "VAN (T)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Glycopeptide"}, {"color": "#2E7D32", "font": {"color": "#111111"}, "id": "AMP__T", "label": "AMP (T)", "shape": "dot", "title": "AMP (T)\u003cbr\u003eAWaRe: Access\u003cbr\u003eClass: Penicillin (\u03b2-lactam)"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "PIT__T", "label": "PIT (T)", "shape": "dot", "title": "PIT (T)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: \u03b2-lactam/\u03b2-lactamase inhibitor"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "CRO__T", "label": "CRO (T)", "shape": "dot", "title": "CRO (T)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Third-gen cephalosporin (\u03b2-lactam)"}, {"color": "#EF6C00", "font": {"color": "#111111"}, "id": "PIP__T", "label": "PIP (T)", "shape": "dot", "title": "PIP (T)\u003cbr\u003eAWaRe: Watch\u003cbr\u003eClass: Penicillin (\u03b2-lactam)"}]);
+                  edges = new vis.DataSet([{"arrows": "to", "from": "CIP__R", "title": "weight=66.0828, rules=2922", "to": "MER__T", "width": 7.86023054194096}, {"arrows": "to", "from": "CIP__R", "title": "weight=64.5534, rules=2850", "to": "CTX__T", "width": 7.701459476083512}, {"arrows": "to", "from": "CIP__R", "title": "weight=17.0748, rules=870", "to": "AMC__T", "width": 2.772580224468901}, {"arrows": "to", "from": "CIP__R", "title": "weight=10.5930, rules=531", "to": "VAN__T", "width": 2.0996873941597602}, {"arrows": "to", "from": "CIP__R", "title": "weight=9.3267, rules=477", "to": "AMP__T", "width": 1.968229436336244}, {"arrows": "to", "from": "CIP__R", "title": "weight=8.1333, rules=342", "to": "LIZ__T", "width": 1.8443394206475574}, {"arrows": "to", "from": "CIP__R", "title": "weight=6.0564, rules=288", "to": "PIT__T", "width": 1.628730929291907}, {"arrows": "to", "from": "CIP__R", "title": "weight=4.9299, rules=219", "to": "CRO__T", "width": 1.5117859798421789}, {"arrows": "to", "from": "CIP__R", "title": "weight=3.0039, rules=135", "to": "PIP__T", "width": 1.311842817267677}, {"arrows": "to", "from": "CTX__R", "title": "weight=77.0619, rules=3015", "to": "MER__T", "width": 9.0}, {"arrows": "to", "from": "CTX__R", "title": "weight=12.0297, rules=570", "to": "CIP__T", "width": 2.2488350274260043}, {"arrows": "to", "from": "CTX__R", "title": "weight=9.6792, rules=465", "to": "VAN__T", "width": 2.004823395218649}, {"arrows": "to", "from": "CTX__R", "title": "weight=7.8177, rules=339", "to": "LIZ__T", "width": 1.8115761485247575}, {"arrows": "to", "from": "CTX__R", "title": "weight=7.7913, rules=366", "to": "AMP__T", "width": 1.8088354945829264}, {"arrows": "to", "from": "CTX__R", "title": "weight=6.7797, rules=309", "to": "AMC__T", "width": 1.7038186185391226}, {"arrows": "to", "from": "CTX__R", "title": "weight=6.7515, rules=303", "to": "CRO__T", "width": 1.70089110182853}, {"arrows": "to", "from": "CTX__R", "title": "weight=3.8949, rules=180", "to": "PIT__T", "width": 1.4043398878044793}, {"arrows": "to", "from": "CTX__R", "title": "weight=1.5273, rules=57", "to": "PIP__T", "width": 1.1585530592938924}, {"arrows": "to", "from": "VAN__R", "title": "weight=51.1266, rules=2328", "to": "LIZ__T", "width": 6.307587796304011}, {"arrows": "to", "from": "VAN__R", "title": "weight=21.6654, rules=1128", "to": "MER__T", "width": 3.249142572399591}, {"arrows": "to", "from": "VAN__R", "title": "weight=9.9330, rules=525", "to": "CIP__T", "width": 2.0311710456139807}, {"arrows": "to", "from": "VAN__R", "title": "weight=9.6543, rules=477", "to": "CTX__T", "width": 2.0022384602507852}, {"arrows": "to", "from": "VAN__R", "title": "weight=9.0717, rules=465", "to": "AMP__T", "width": 1.9417572107617382}, {"arrows": "to", "from": "VAN__R", "title": "weight=7.5939, rules=402", "to": "AMC__T", "width": 1.7883428776087795}, {"arrows": "to", "from": "VAN__R", "title": "weight=4.2057, rules=216", "to": "PIP__T", "width": 1.4366048592105827}, {"arrows": "to", "from": "VAN__R", "title": "weight=1.7844, rules=93", "to": "CRO__T", "width": 1.1852432914319528}, {"arrows": "to", "from": "VAN__R", "title": "weight=0.7143, rules=42", "to": "PIT__T", "width": 1.0741533754034094}, {"arrows": "to", "from": "MER__R", "title": "weight=15.0102, rules=828", "to": "CTX__T", "width": 2.5582486286997854}, {"arrows": "to", "from": "MER__R", "title": "weight=7.5336, rules=483", "to": "CIP__T", "width": 1.7820829748552787}, {"arrows": "to", "from": "MER__R", "title": "weight=5.2503, rules=357", "to": "PIT__T", "width": 1.5450475526816754}, {"arrows": "to", "from": "MER__R", "title": "weight=4.7499, rules=306", "to": "LIZ__T", "width": 1.4930997029660573}, {"arrows": "to", "from": "MER__R", "title": "weight=4.1973, rules=285", "to": "AMP__T", "width": 1.4357328329563637}, {"arrows": "to", "from": "MER__R", "title": "weight=3.9603, rules=267", "to": "CRO__T", "width": 1.4111292350694702}, {"arrows": "to", "from": "MER__R", "title": "weight=3.0348, rules=216", "to": "PIP__T", "width": 1.3150506281314112}, {"arrows": "to", "from": "MER__R", "title": "weight=2.3937, rules=180", "to": "VAN__T", "width": 1.2484963386576247}, {"arrows": "to", "from": "MER__R", "title": "weight=0.7479, rules=60", "to": "AMC__T", "width": 1.0776414804202856}, {"arrows": "to", "from": "LIZ__R", "title": "weight=7.5900, rules=465", "to": "MER__T", "width": 1.7879380082764635}, {"arrows": "to", "from": "LIZ__R", "title": "weight=7.4739, rules=468", "to": "VAN__T", "width": 1.775885359691365}, {"arrows": "to", "from": "LIZ__R", "title": "weight=3.9216, rules=270", "to": "AMP__T", "width": 1.4071116855411039}, {"arrows": "to", "from": "LIZ__R", "title": "weight=3.8826, rules=261", "to": "CIP__T", "width": 1.4030629922179443}, {"arrows": "to", "from": "LIZ__R", "title": "weight=3.8784, rules=234", "to": "CTX__T", "width": 1.4026269790908348}, {"arrows": "to", "from": "LIZ__R", "title": "weight=2.7903, rules=189", "to": "PIT__T", "width": 1.2896684353746792}, {"arrows": "to", "from": "LIZ__R", "title": "weight=1.7250, rules=117", "to": "PIP__T", "width": 1.1790768200628325}, {"arrows": "to", "from": "LIZ__R", "title": "weight=1.6890, rules=117", "to": "CRO__T", "width": 1.1753395646876084}, {"arrows": "to", "from": "LIZ__R", "title": "weight=1.0431, rules=81", "to": "AMC__T", "width": 1.108286974497125}, {"arrows": "to", "from": "CRO__R", "title": "weight=5.8140, rules=339", "to": "MER__T", "width": 1.60356674309873}, {"arrows": "to", "from": "CRO__R", "title": "weight=4.6359, rules=279", "to": "LIZ__T", "width": 1.4812650609445135}, {"arrows": "to", "from": "CRO__R", "title": "weight=3.8445, rules=219", "to": "CTX__T", "width": 1.3991077302791652}, {"arrows": "to", "from": "CRO__R", "title": "weight=1.9305, rules=126", "to": "CIP__T", "width": 1.2004103194964049}, {"arrows": "to", "from": "CRO__R", "title": "weight=1.6416, rules=114", "to": "AMC__T", "width": 1.1704188451102295}, {"arrows": "to", "from": "CRO__R", "title": "weight=1.4211, rules=93", "to": "PIT__T", "width": 1.1475281559369805}, {"arrows": "to", "from": "CRO__R", "title": "weight=1.1391, rules=81", "to": "AMP__T", "width": 1.1182529888310566}, {"arrows": "to", "from": "CRO__R", "title": "weight=1.1301, rules=78", "to": "VAN__T", "width": 1.1173186749872506}, {"arrows": "to", "from": "CRO__R", "title": "weight=0.9222, rules=66", "to": "PIP__T", "width": 1.09573602519533}, {"arrows": "to", "from": "AMC__R", "title": "weight=7.2507, rules=384", "to": "MER__T", "width": 1.7527143763649742}, {"arrows": "to", "from": "AMC__R", "title": "weight=5.3925, rules=294", "to": "CTX__T", "width": 1.5598097114138114}, {"arrows": "to", "from": "AMC__R", "title": "weight=2.4342, rules=141", "to": "LIZ__T", "width": 1.252700750954752}, {"arrows": "to", "from": "AMC__R", "title": "weight=2.1402, rules=138", "to": "VAN__T", "width": 1.2221798320570867}, {"arrows": "to", "from": "AMC__R", "title": "weight=2.0046, rules=123", "to": "CIP__T", "width": 1.2081028368104083}, {"arrows": "to", "from": "AMC__R", "title": "weight=1.3083, rules=93", "to": "PIT__T", "width": 1.135818089094611}, {"arrows": "to", "from": "AMC__R", "title": "weight=0.9081, rules=66", "to": "AMP__T", "width": 1.0942722668400338}, {"arrows": "to", "from": "AMC__R", "title": "weight=0.3486, rules=27", "to": "PIP__T", "width": 1.036189089550089}, {"arrows": "to", "from": "AMC__R", "title": "weight=0.2331, rules=18", "to": "CRO__T", "width": 1.0241987285545775}, {"arrows": "to", "from": "PIP__R", "title": "weight=5.7177, rules=345", "to": "MER__T", "width": 1.5935695849700047}, {"arrows": "to", "from": "PIP__R", "title": "weight=2.8170, rules=174", "to": "VAN__T", "width": 1.292440233111304}, {"arrows": "to", "from": "PIP__R", "title": "weight=2.3793, rules=153", "to": "AMC__T", "width": 1.2470014365075348}, {"arrows": "to", "from": "PIP__R", "title": "weight=2.1657, rules=144", "to": "CTX__T", "width": 1.2248270546145372}, {"arrows": "to", "from": "PIP__R", "title": "weight=2.0934, rules=135", "to": "CIP__T", "width": 1.217321400069295}, {"arrows": "to", "from": "PIP__R", "title": "weight=1.1535, rules=81", "to": "PIT__T", "width": 1.1197478909811462}, {"arrows": "to", "from": "PIP__R", "title": "weight=1.0407, rules=75", "to": "CRO__T", "width": 1.1080378241387767}, {"arrows": "to", "from": "PIP__R", "title": "weight=0.3480, rules=21", "to": "LIZ__T", "width": 1.0361268019605019}, {"arrows": "to", "from": "PIP__R", "title": "weight=0.3066, rules=24", "to": "AMP__T", "width": 1.031828958278994}, {"arrows": "to", "from": "AMP__R", "title": "weight=5.5203, rules=321", "to": "MER__T", "width": 1.573076967995858}, {"arrows": "to", "from": "AMP__R", "title": "weight=2.6682, rules=159", "to": "CTX__T", "width": 1.2769929108937101}, {"arrows": "to", "from": "AMP__R", "title": "weight=1.8699, rules=114", "to": "LIZ__T", "width": 1.1941192729481105}, {"arrows": "to", "from": "AMP__R", "title": "weight=1.6116, rules=108", "to": "CRO__T", "width": 1.167304465630876}, {"arrows": "to", "from": "AMP__R", "title": "weight=1.3032, rules=93", "to": "VAN__T", "width": 1.1352886445831207}, {"arrows": "to", "from": "AMP__R", "title": "weight=1.1265, rules=78", "to": "PIP__T", "width": 1.116944949449728}, {"arrows": "to", "from": "AMP__R", "title": "weight=1.0944, rules=75", "to": "AMC__T", "width": 1.1136125634068197}, {"arrows": "to", "from": "AMP__R", "title": "weight=0.4827, rules=39", "to": "CIP__T", "width": 1.0501103658227997}, {"arrows": "to", "from": "AMP__R", "title": "weight=0.4794, rules=33", "to": "PIT__T", "width": 1.0497677840800708}, {"arrows": "to", "from": "PIT__R", "title": "weight=1.6815, rules=114", "to": "CTX__T", "width": 1.17456096981777}, {"arrows": "to", "from": "PIT__R", "title": "weight=1.6614, rules=120", "to": "PIP__T", "width": 1.172474335566603}, {"arrows": "to", "from": "PIT__R", "title": "weight=1.0059, rules=69", "to": "AMC__T", "width": 1.1044251439427266}, {"arrows": "to", "from": "PIT__R", "title": "weight=0.9129, rules=63", "to": "LIZ__T", "width": 1.0947705675567303}, {"arrows": "to", "from": "PIT__R", "title": "weight=0.7845, rules=54", "to": "CRO__T", "width": 1.0814410233850968}, {"arrows": "to", "from": "PIT__R", "title": "weight=0.6465, rules=45", "to": "MER__T", "width": 1.0671148777800703}, {"arrows": "to", "from": "PIT__R", "title": "weight=0.3912, rules=27", "to": "VAN__T", "width": 1.040611508410771}, {"arrows": "to", "from": "PIT__R", "title": "weight=0.2634, rules=21", "to": "AMP__T", "width": 1.0273442518287248}, {"arrows": "to", "from": "PIT__R", "title": "weight=0.0336, rules=3", "to": "CIP__T", "width": 1.003488105016876}]);
+
+                  nodeColors = {};
+                  allNodes = nodes.get({ returnType: "Object" });
+                  for (nodeId in allNodes) {
+                    nodeColors[nodeId] = allNodes[nodeId].color;
+                  }
+                  allEdges = edges.get({ returnType: "Object" });
+                  // adding nodes and edges to the graph
+                  data = {nodes: nodes, edges: edges};
+
+                  var options = {"layout": {"hierarchical": {"enabled": true, "direction": "LR", "sortMethod": "directed"}}, "physics": {"enabled": false}};
+
+                  
+
+
+                  
+
+                  network = new vis.Network(container, data, options);
+
+                  
+
+                  
+
+                  
+
+
+                  
+
+                  return network;
+
+              }
+              drawGraph();
+        </script>
+    </body>
+</html>

@@ -1,0 +1,33 @@
+{
+  "name": "All Isolates for Escherichia coli Analysis",
+  "description": "All isolates, for Escherichia coli 2019-2023",
+  "filters": [
+    {
+      "column": "Pathogen",
+      "operator": "equals",
+      "value": "Escherichia coli"
+    },
+    {
+      "column": "CSQ",
+      "operator": "equals",
+      "value": "Erstisolat"
+    },
+    {
+        "column": "ARS_WardType",
+        "operator": "in",
+        "values": ["Normal Ward", "Intensive Care Unit", "Outpatient"]
+    },
+    {
+      "column": "CareType",
+      "operator": "in",
+      "values": ["In-Patient", "Out-Patient"]
+    },
+    {
+      "column": "Year",
+      "operator": "range",
+      "min": 2019,
+      "max": 2023
+    }
+  ],
+  "verbose": true
+}

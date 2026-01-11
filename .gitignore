@@ -202,3 +202,5 @@ discussion-results
 logfile
 other.ipynb
 check.csv
+publication_global/
+outputs_crossviz_publication/

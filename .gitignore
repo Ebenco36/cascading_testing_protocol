@@ -168,7 +168,7 @@ djjjjsjjssss.csv
 irrrr.ipynb
 real_paper.tex
 results.tex
-*.txt
+# *.txt
 pub_outputs/
 results_use_cases/
 publication_outputs/
@@ -221,3 +221,9 @@ PhD Professor
 PhD.ipynb
 fresh.ipynb
 src/controllers/ARM/
+./datasets/GISD_Bundesland_Updated.csv
+./datasets/GISD_Bund_Kreis_Updated.csv
+./datasets/not_recommended_antibiotics.csv
+./datasets/AWaRe Classification 2019.csv
+
+paperLatex.txt

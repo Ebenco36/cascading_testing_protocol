@@ -363,7 +363,8 @@ class DataProcessing:
 
         # Assemble
         meta_cols = [
-            "OrgType", "Anonymized_Lab", "IdPatientDW", "Pathogen", "PathogengroupL1", "GramType", "Sex", "Date", "PathogenGenus",
+            "IdIsolateDW","IdSpecimenDW", "OrgType", "Anonymized_Lab", "IdPatientDW", 
+            "Pathogen", "PathogengroupL1", "GramType", "Sex", "Date", "PathogenGenus",
             "TextMaterialgroupRkiL0", "AgeGroup", "AgeRange", "CareType", "ARS_HospitalLevelManual",
             "ARS_WardType", "ARS_Region", "Year", "Month", "MonthName", "YearMonth", "SeasonCode",
             "SeasonName", "TotalAntibioticsTested", "PathogenSummary", "BroadAgeGroup",
@@ -400,7 +401,7 @@ class DataProcessing:
         )
 
         # Drop IdPatientDW after filtering/exports prepared
-        self.data = self.data.drop(columns=["IdPatientDW"], errors="ignore")
+        # self.data = self.data.drop(columns=["IdPatientDW"], errors="ignore")
 
         # Save flat parquet dataset
         out_dir = Path("./datasets") / "structured/dataset_parquet"

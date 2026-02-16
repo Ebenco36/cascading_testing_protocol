@@ -40,6 +40,7 @@ import colorsys
 from src.controllers.filters.FilteringStrategy import FilterConfig
 
 warnings.filterwarnings("ignore")
+warnings.filterwarnings("ignore", message="This figure includes Axes that are not compatible with tight_layout")
 
 
 class DataExplorer:
@@ -903,9 +904,6 @@ class DataExplorer:
         """Compute figure height so all y-axis labels + annotations are visible."""
         return int(min(max(min_h, n_bars * px_per_bar), max_h))
 
-
-
-
     def _plot_testing_frequency(self, top_n: int = 20, save_tables: bool = True) -> None:
         df = self.metrics.get("testing")
         if df is None or df.empty:
@@ -978,8 +976,6 @@ class DataExplorer:
         self._save_figure(fig, f"06_testing_frequency_top{top_n}")
 
 
-
-    
     def analyze_resistance_top(
         self,
         top_n: int = 40,
@@ -1039,9 +1035,7 @@ class DataExplorer:
         self.metrics["resistance_top_sort_by"] = sort_by
         self.metrics["resistance_top_n"] = int(top_n)
         return res_df
-
-    
-    
+  
     def _plot_resistance_top(
         self,
         top_n: int = 40,
@@ -1136,9 +1130,6 @@ class DataExplorer:
         )
         self._save_figure(fig, f"07_ecoli_{safe_metric}_top{top_n}")
 
-
-
-    
     def analyze_yearly_ris_top(
         self,
         top_n: int = 10,
@@ -1277,7 +1268,6 @@ class DataExplorer:
         self.metrics["yearly_ris_sort_by"] = sort_by
         self.metrics["yearly_ris_years"] = years
         return out
-
 
     def _plot_yearly_ris_grid(
         self,
@@ -1504,10 +1494,6 @@ class DataExplorer:
         )
 
         self._save_figure(fig, f"08_yearly_RIS_grid_{selection}_top{top_n}")
-
-
-
-
 
 
 

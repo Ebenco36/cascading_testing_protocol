@@ -204,3 +204,20 @@ other.ipynb
 check.csv
 publication_global/
 outputs_crossviz_publication/
+sensitivity_output/
+/*.csv
+test2.ipynb
+test3.ipynb
+testing.ipynb
+tutorial.ipynb
+draft1
+publication_global/
+outputs_crossviz_publication/
+fci_graphs/
+.Rproj.user
+PhDChart/
+
+PhD Professor
+PhD.ipynb
+fresh.ipynb
+src/controllers/ARM/

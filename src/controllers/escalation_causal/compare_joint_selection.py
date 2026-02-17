@@ -6,6 +6,8 @@ Runs the full pipeline twice:
     - use_joint_selection = False (standard TestingModel)
     - use_joint_selection = True  (JointSelectionModel)
 Then compares the risk difference estimates and saves a joint forest plot.
+
+Now with proper split for screening to avoid winner's curse.
 """
 
 import logging
@@ -14,6 +16,7 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
+from sklearn.model_selection import GroupShuffleSplit
 
 # Add the directory containing this script to sys.path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -100,8 +103,9 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
         vertical_spacing=0.15,
     )
 
-    # Forest plot style for the two estimates
     y_pos = list(range(len(merged)))
+
+    # Standard estimates
     fig.add_trace(go.Scatter(
         x=merged["rd_false"],
         y=y_pos,
@@ -119,6 +123,7 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
         showlegend=True,
     ), row=1, col=1)
 
+    # Joint estimates
     fig.add_trace(go.Scatter(
         x=merged["rd_true"],
         y=y_pos,
@@ -136,7 +141,7 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
         showlegend=True,
     ), row=1, col=1)
 
-    # Difference plot
+    # Difference bar chart
     fig.add_trace(go.Bar(
         x=merged["rd_diff"],
         y=y_pos,
@@ -146,7 +151,7 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
         showlegend=False,
     ), row=2, col=1)
 
-    # Add vertical line at zero
+    # Vertical lines at zero
     fig.add_vline(x=0, line_dash="dash", line_color="gray", row=1, col=1)
     fig.add_vline(x=0, line_dash="dash", line_color="gray", row=2, col=1)
 
@@ -169,7 +174,7 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
 
 def main():
     # ------------------------------------------------------------------
-    # 1. Load and filter data (same as in run_analysis.py)
+    # 1. Load and filter data
     # ------------------------------------------------------------------
     data_path = "./datasets/structured/dataset_parquet"
     filter_config_path = "./src/controllers/filters/config_all_klebsiella.json"
@@ -195,7 +200,24 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # 2. Phase 1 screening (same as before)
+    # 2. Split data into discovery (screening) and estimation sets
+    #    Use group shuffle by laboratory to keep all isolates from a lab together.
+    # ------------------------------------------------------------------
+    group_col = "Anonymized_Lab"
+    groups = df[group_col].astype("string").fillna("NA").to_numpy()
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=42)
+    discovery_idx, estimation_idx = next(gss.split(df.index, groups=groups))
+
+    discovery_df = df.iloc[discovery_idx].copy()
+    discovery_flags = flags.iloc[discovery_idx].copy()
+    estimation_df = df.iloc[estimation_idx].copy()
+    estimation_flags = flags.iloc[estimation_idx].copy()
+
+    logger.info(f"Discovery set: {len(discovery_df)} isolates from {discovery_df[group_col].nunique()} labs")
+    logger.info(f"Estimation set: {len(estimation_df)} isolates from {estimation_df[group_col].nunique()} labs")
+
+    # ------------------------------------------------------------------
+    # 3. Phase 1 screening on discovery set only
     # ------------------------------------------------------------------
     phase1_cfg = Phase1Config(
         min_group=50,
@@ -207,8 +229,8 @@ def main():
     screener = Phase1Screener(phase1_cfg)
 
     phase1_df = screener.run(
-        df=df,
-        flags=flags,
+        df=discovery_df,
+        flags=discovery_flags,
         all_codes=all_codes,
         top_n=100,
     )
@@ -218,10 +240,10 @@ def main():
         return
 
     pairs = list(zip(phase1_df["trigger"], phase1_df["target"]))
-    logger.info(f"Selected {len(pairs)} pairs from Phase 1 screening")
+    logger.info(f"Selected {len(pairs)} pairs from Phase 1 screening (discovery set)")
 
     # ------------------------------------------------------------------
-    # 3. Base configuration (without joint selection flag)
+    # 4. Base configuration (without joint selection flag)
     # ------------------------------------------------------------------
     base_config = RunConfig(
         split=SplitConfig(
@@ -273,21 +295,21 @@ def main():
     )
 
     # ------------------------------------------------------------------
-    # 4. Run both configurations
+    # 5. Run both configurations on the estimation set
     # ------------------------------------------------------------------
     output_base = Path("./comparison_output")
     output_base.mkdir(exist_ok=True)
 
     # Without joint selection
-    logger.info("=== Running WITHOUT joint selection ===")
-    res_false = run_with_flag(False, base_config, df, flags, all_codes, pairs, output_base / "run_false")
+    logger.info("=== Running WITHOUT joint selection on estimation set ===")
+    res_false = run_with_flag(False, base_config, estimation_df, estimation_flags, all_codes, pairs, output_base / "run_false")
 
     # With joint selection
-    logger.info("=== Running WITH joint selection ===")
-    res_true = run_with_flag(True, base_config, df, flags, all_codes, pairs, output_base / "run_true")
+    logger.info("=== Running WITH joint selection on estimation set ===")
+    res_true = run_with_flag(True, base_config, estimation_df, estimation_flags, all_codes, pairs, output_base / "run_true")
 
     # ------------------------------------------------------------------
-    # 5. Compare and plot
+    # 6. Compare and plot
     # ------------------------------------------------------------------
     merged = compare_results(res_false, res_true)
     merged.to_csv(output_base / "comparison_merged.csv", index=False)

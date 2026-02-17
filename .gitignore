@@ -227,3 +227,4 @@ src/controllers/ARM/
 ./datasets/AWaRe Classification 2019.csv
 
 paperLatex.txt
+./src/controllers/ARM

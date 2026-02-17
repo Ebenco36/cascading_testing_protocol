@@ -1,7 +1,13 @@
 {
-  "name": "All Isolates",
-  "description": "All isolates, for E. coli 2019-2023",
+  "name": "E. coli Inpatient Analysis",
+  "description": "E. coli, first isolates, inpatient only, 2019-2023",
   "filters": [
+    {
+      "column": "PathogenGenus",
+      "operator": "equals",
+      "value": "Proteus"
+    },
+  
     {
         "column": "ARS_WardType",
         "operator": "in",

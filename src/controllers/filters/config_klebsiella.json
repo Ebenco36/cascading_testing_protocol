@@ -1,7 +1,12 @@
 {
-  "name": "All Isolates",
-  "description": "All isolates, for E. coli 2019-2023",
+  "name": "All Isolates for Klebsiella pneumoniae Analysis",
+  "description": "All isolates, for Klebsiella pneumoniae 2019-2023",
   "filters": [
+    {
+      "column": "PathogenGenus",
+      "operator": "equals",
+      "value": "Klebsiella"
+    },
     {
         "column": "ARS_WardType",
         "operator": "in",

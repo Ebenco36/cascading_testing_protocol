@@ -226,5 +226,7 @@ src/controllers/ARM/
 ./datasets/not_recommended_antibiotics.csv
 ./datasets/AWaRe Classification 2019.csv
 
-paperLatex.txt
+paperLatex.tex
 ./src/controllers/ARM
+comparison_output
+explorer_output_multipathogen/

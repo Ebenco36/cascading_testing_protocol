@@ -1,23 +1,36 @@
 #!/usr/bin/env python3
 """
-Complete analysis script for antibiotic escalation using the causal pipeline.
-Generates publication‑ready plots using Plotly, including advanced visualizations.
-Now includes full integration of heterogeneity analysis (causal forest) and combined figures.
+Multi‑pathogen analysis script for antibiotic escalation.
+
+For each pathogen genus (specified by a filter config JSON file):
+  - Loads the full dataset, applies the genus‑specific filter.
+  - Splits into discovery and estimation sets (by laboratory).
+  - Performs Phase 1 screening on discovery set.
+  - Runs the causal pipeline on estimation set.
+  - Applies Bayesian shrinkage and generates plots.
+  - Runs heterogeneity analysis (causal forest) for the top pair (if test data stored).
+  - Computes yearly time‑trend estimates and plots.
+  - Exports cascade dependencies.
+  - Saves all results in a genus‑specific subdirectory.
+
+Usage:
+  python run_analysis_multipathogen.py
 """
 
 import sys
 import re
 import logging
+from pathlib import Path
+
 import pandas as pd
 import numpy as np
-from pathlib import Path
+from sklearn.model_selection import GroupShuffleSplit
 
 # Add the directory containing this script to sys.path
 sys.path.insert(0, str(Path(__file__).parent))
 
 from src.controllers.DataLoader import DataLoader
-from sklearn.model_selection import GroupShuffleSplit
-
+from src.controllers.filters.FilteringStrategy import FilterConfig
 from src.controllers.escalation_causal.config.settings import (
     RunConfig,
     SplitConfig,
@@ -81,441 +94,6 @@ def get_covariate_names(config: CovariateConfig, df: pd.DataFrame) -> list:
     # In practice you would use a proper encoder that stores feature names.
     # Here we just return a placeholder.
     return [f"cov_{i}" for i in range(10)]  # adjust as needed
-
-
-# ----------------------------------------------------------------------
-# Main
-# ----------------------------------------------------------------------
-def main():
-    # ------------------------------------------------------------------
-    # 1. Load and filter data
-    # ------------------------------------------------------------------
-    data_path = "./datasets/structured/dataset_parquet"
-    filter_config_path = "./src/controllers/filters/config_all_klebsiella.json"
-
-    loader = DataLoader(data_path, strict=False, normalize_on_load=True)
-
-    from src.controllers.filters.FilteringStrategy import FilterConfig
-    filter_config = FilterConfig.from_json(filter_config_path)
-
-    df, meta = loader.get_cohort(
-        filter_config=filter_config,
-        apply_exclusions=True,
-        verbose=True,
-    )
-    logger.info(f"Cohort loaded: {meta.n_rows} rows from {meta.n_labs} labs")
-
-    all_codes = sorted(loader.code_to_base.keys())
-    logger.info(f"Total antibiotic codes: {len(all_codes)}")
-
-    flags = loader.get_abx_flags(
-        df,
-        codes=all_codes,
-        recode_mode="R_vs_nonR",
-        drop_I=True,
-    )
-
-    # ------------------------------------------------------------------
-    # 2. Split data into discovery (screening) and estimation sets
-    #    Use group shuffle by laboratory to keep all isolates from a lab together.
-    # ------------------------------------------------------------------
-    group_col = "Anonymized_Lab"
-    groups = df[group_col].astype("string").fillna("NA").to_numpy()
-    gss = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=42)
-    discovery_idx, estimation_idx = next(gss.split(df.index, groups=groups))
-
-    discovery_df = df.iloc[discovery_idx].copy()
-    discovery_flags = flags.iloc[discovery_idx].copy()
-    estimation_df = df.iloc[estimation_idx].copy()
-    estimation_flags = flags.iloc[estimation_idx].copy()
-
-    logger.info(f"Discovery set: {len(discovery_df)} isolates from {discovery_df[group_col].nunique()} labs")
-    logger.info(f"Estimation set: {len(estimation_df)} isolates from {estimation_df[group_col].nunique()} labs")
-
-    # ------------------------------------------------------------------
-    # 3. Phase 1 screening on discovery set only
-    # ------------------------------------------------------------------
-    phase1_cfg = Phase1Config(
-        min_group=50,
-        min_trigger_tested=100,
-        crude_screening_threshold=0.05,
-        fdr_alpha=0.05,
-        exclude_targets_equal_trigger=True,
-    )
-    screener = Phase1Screener(phase1_cfg)
-
-    phase1_df = screener.run(
-        df=discovery_df,
-        flags=discovery_flags,
-        all_codes=all_codes,
-        top_n=100,
-    )
-
-    if phase1_df.empty:
-        logger.error("No pairs passed Phase 1 screening. Exiting.")
-        return
-
-    pairs = list(zip(phase1_df["trigger"], phase1_df["target"]))
-    logger.info(f"Selected {len(pairs)} pairs from Phase 1 screening (discovery set)")
-
-    # ------------------------------------------------------------------
-    # 4. Configure the causal pipeline
-    # ------------------------------------------------------------------
-    config = RunConfig(
-        split=SplitConfig(
-            test_size=0.3,
-            split_group_col="Anonymized_Lab",
-            random_state=42,
-        ),
-        covariates=CovariateConfig(
-            covariate_cols=[
-                "Anonymized_Lab",
-                "ARS_WardType",
-                "AgeGroup",
-                "Year",
-            ],
-            min_count=200,
-            max_levels=25,
-            drop_first=True,
-        ),
-        policy=PolicyConfig(
-            context_cols=["Anonymized_Lab", "PathogengroupL1", "Year"],
-            method="empirical",
-            min_context_n=100,
-            model_type="xgb",
-            calibrate=True,
-            calibration_method="isotonic",
-            calibration_cv=5,
-        ),
-        nuisance=NuisanceConfig(
-            testing_model="xgb",
-            propensity_model="xgb",
-            outcome_model="xgb",
-            calibrate_testing=True,
-            calibrate_propensity=False,
-            calibrate_outcome=False,
-            testing_cv_folds=5,
-            use_joint_selection=True,
-            random_state=42,
-        ),
-        tmle=TMLEConfig(
-            n_folds=5,
-            min_prob=0.01,
-            weight_cap_percentile=99.0,
-            min_tested=200,
-            min_group=50,
-            stabilize_weights=True,
-            n_bootstrap=None,
-            alpha=0.05,
-        ),
-    )
-
-    # ------------------------------------------------------------------
-    # 5. Run the causal pipeline on estimation set
-    # ------------------------------------------------------------------
-    pipeline = CausalPipeline(config, n_jobs=4)
-    results = pipeline.run(
-        df=estimation_df,
-        flags=estimation_flags,
-        all_codes=all_codes,
-        pairs=pairs,
-    )
-
-    # Expose the fitted policy and test set indices for later use (calibration, etc.)
-    # We'll add attributes to the pipeline object manually (or modify pipeline to store them)
-    pipeline.policy_ = pipeline._policy          # fitted routine policy
-    # To retrieve per‑observation data for a specific pair, we need to modify the pipeline
-    # to store the test set dataframes and the computed escalation scores.
-    # For now, we assume the pipeline has the following public attributes after run:
-    #   - df_test : test DataFrame
-    #   - flags_test : test flags DataFrame
-    #   - esc_scores : dict {code: np.array} of escalation scores
-    # These must be added in pipeline.py (see comments below).
-    # If not available, we will skip the causal forest part.
-
-    # ------------------------------------------------------------------
-    # 6. Save results and generate failure summary
-    # ------------------------------------------------------------------
-    output_dir = Path("./output")
-    save_results(
-        output_dir,
-        results,
-        config.model_dump(),
-        cohort_meta={
-            "name": meta.name,
-            "n_rows": meta.n_rows,
-            "n_labs": meta.n_labs,
-            "year_range": f"{meta.yearmonth_min} – {meta.yearmonth_max}",
-            "pathogen": meta.pathogen,
-        },
-    )
-    logger.info(f"Results saved to {output_dir}")
-
-    generate_failure_summary(results, output_dir)
-
-    # ------------------------------------------------------------------
-    # 7. Export filtered cascade results (for downstream use)
-    # ------------------------------------------------------------------
-    exporter = EscalationExporter(escalation_df=results)
-    exporter.filter(
-        p_threshold=0.05,
-        rd_min=0.05,
-        effect_direction="positive",
-        min_ess=50,
-        keep_failed=False,
-    )
-    export = exporter.export("./output/", prefix="kleb_escalation")
-    print(f"Exported {export.metadata['stats']['n_pairs']} cascade edges.")
-    print("Dependencies:", export.dependencies)
-
-    # ------------------------------------------------------------------
-    # 8. Bayesian shrinkage for multiple comparisons
-    # ------------------------------------------------------------------
-    shrinkage_df = results[results["status"] == "ok"].copy()
-    shrinkage_df["pair"] = shrinkage_df["trigger"] + " → " + shrinkage_df["target"]
-    shrinkage_df = shrinkage_df.dropna(subset=["rd", "se"])
-
-    if len(shrinkage_df) > 1:
-        bs = BayesianShrinkage(random_seed=42, draws=2000, tune=1000)
-        bs.fit(shrinkage_df, estimate_col="rd", se_col="se")
-        shrunk_summary = bs.summary()
-        shrunk_summary.to_csv(output_dir / "bayesian_shrinkage_summary.csv", index=False)
-
-        # Posterior probability plot
-        prob_plot = PosteriorProbabilityPlot(
-            shrunk_summary,
-            pair_col="pair",
-            prob_col="prob_positive",
-            title="Posterior Probability of Positive Escalation Effect",
-        )
-        prob_plot.save(output_dir / "posterior_prob.png", width=1000, height=800, scale=2)
-        prob_plot.save(output_dir / "posterior_prob.pdf")
-
-        # Shrinkage forest plot
-        shrink_forest = ShrinkageForestPlot(
-            shrunk_summary,
-            original_est_col="rd",
-            original_se_col="se",
-            shrunken_est_col="theta_shrunken",
-            shrunken_sd_col="theta_sd",
-            pair_col="pair",
-            title="Bayesian Shrinkage: Original vs. Shrunken Estimates",
-        )
-        shrink_forest.save(output_dir / "shrinkage_forest.png", width=1200, height=900, scale=2)
-        shrink_forest.save(output_dir / "shrinkage_forest.pdf")
-        shrink_forest.save(output_dir / "shrinkage_forest.html")
-        logger.info("Bayesian shrinkage plots saved.")
-    else:
-        logger.warning("Not enough valid pairs for Bayesian shrinkage.")
-
-    # ------------------------------------------------------------------
-    # 9. Heterogeneity analysis with causal forest (for the top pair)
-    # ------------------------------------------------------------------
-    # We need to ensure the pipeline stored test data. If not, we skip.
-    if not results[results["status"] == "ok"].empty:
-        valid = results[results["status"] == "ok"].copy()
-        top_idx = valid["rd"].abs().idxmax()
-        top_row = valid.loc[top_idx]
-        trigger, target = top_row["trigger"], top_row["target"]
-        logger.info(f"Running causal forest for top pair: {trigger} → {target}")
-
-        # Check if pipeline has stored test data (requires modification in pipeline.py)
-        if hasattr(pipeline, "df_test") and hasattr(pipeline, "flags_test") and hasattr(pipeline, "esc_scores"):
-            df_test = pipeline.df_test
-            flags_test = pipeline.flags_test
-            esc_scores = pipeline.esc_scores
-
-            # Get tested mask for trigger
-            T_col = f"{trigger}_T"
-            if T_col not in flags_test.columns:
-                logger.error(f"Trigger column {T_col} missing in test flags.")
-            else:
-                tested_mask = flags_test[T_col].astype(int).to_numpy() == 1
-                if tested_mask.sum() == 0:
-                    logger.error("No tested isolates for trigger in test set.")
-                else:
-                    # Build covariates (using same method as pipeline)
-                    X = pipeline._encode_covariates(df_test, config.covariates.covariate_cols)
-                    X_tested = X[tested_mask]
-
-                    # Treatment and outcome
-                    A = flags_test[f"{trigger}_R"].astype(int).to_numpy()[tested_mask]
-                    Y = esc_scores[target][tested_mask]  # escalation score
-
-                    # Testing model weights (we need to recompute or retrieve them)
-                    # For simplicity, we'll recompute the testing model for this pair.
-                    # In practice, you might store weights in the pipeline as well.
-                    # We'll use the joint selection model if configured.
-                    if config.nuisance.use_joint_selection:
-                        from src.controllers.escalation_causal.nuisance.joint_selection import JointSelectionModel
-                        joint_model = JointSelectionModel(min_prob=config.tmle.min_prob)
-                        T_full = flags_test[T_col].astype(int).to_numpy()
-                        R_full = flags_test[f"{trigger}_R"].astype(int).to_numpy()
-                        joint_model.fit(X, T_full, R_full)
-                        p_test = joint_model.predict_p_test(X)
-                        # Compute weights for tested
-                        w_full, _ = joint_model.compute_weights(p_test, tested_mask)
-                    else:
-                        from src.controllers.escalation_causal.nuisance.testing_model import TestingModel
-                        test_model = TestingModel(
-                            model_type=config.nuisance.testing_model,
-                            calibrate=config.nuisance.calibrate_testing,
-                            n_folds_cv=config.nuisance.testing_cv_folds,
-                            min_prob=config.tmle.min_prob,
-                            weight_cap_percentile=config.tmle.weight_cap_percentile,
-                        )
-                        test_model.fit(X, T_full)
-                        p_test = test_model.get_oof_predictions() if test_model._is_cross_fitted else test_model.predict_proba(X)
-                        w_full, _ = test_model.compute_weights(p_test, tested_mask)
-
-                    w = w_full[tested_mask]
-
-                    # Fit causal forest
-                    feature_names = get_covariate_names(config.covariates, df_test)
-                    cf = CausalForestWrapper(
-                        n_estimators=400,
-                        max_depth=20,
-                        min_samples_leaf=10,
-                        random_state=42,
-                    )
-                    cf.fit(X_tested, A, Y, sample_weight=w, feature_names=feature_names)
-
-                    # Variable importance
-                    imp = cf.feature_importances()
-                    imp_df = pd.DataFrame(list(imp.items()), columns=["feature", "importance"])
-                    imp_df.sort_values("importance", ascending=False).to_csv(output_dir / f"causal_forest_importance_{trigger}_{target}.csv", index=False)
-
-                    # Plot variable importance
-                    fig_imp = cf.plot_variable_importance(top_k=15)
-                    import matplotlib.pyplot as plt
-                    plt.tight_layout()
-                    plt.savefig(output_dir / f"causal_forest_importance_{trigger}_{target}.png", dpi=300, bbox_inches="tight")
-                    plt.savefig(output_dir / f"causal_forest_importance_{trigger}_{target}.pdf", bbox_inches="tight")
-                    plt.close()
-
-                    # CATE distribution
-                    fig_hist = cf.plot_cate_distribution(X_tested)
-                    plt.tight_layout()
-                    plt.savefig(output_dir / f"cate_distribution_{trigger}_{target}.png", dpi=300, bbox_inches="tight")
-                    plt.savefig(output_dir / f"cate_distribution_{trigger}_{target}.pdf", bbox_inches="tight")
-                    plt.close()
-
-                    # Subgroup summaries
-                    # By ward type
-                    ward_labels = df_test.loc[tested_mask, "ARS_WardType"].values
-                    if ward_labels is not None:
-                        ward_summary = cf.get_cate_summary(X_tested, group_labels=ward_labels)
-                        ward_summary.to_csv(output_dir / f"cate_by_ward_{trigger}_{target}.csv", index=False)
-
-                        # Subgroup forest plot
-                        if not ward_summary.empty:
-                            sf = SubgroupForestPlot(
-                                ward_summary,
-                                subgroup_col="group",
-                                estimate_col="mean_cate",
-                                ci_low_col="ci_low",
-                                ci_high_col="ci_high",
-                                title=f"CATE by Ward Type: {trigger} → {target}",
-                            )
-                            sf.save(output_dir / f"subgroup_forest_ward_{trigger}_{target}.png")
-                            sf.save(output_dir / f"subgroup_forest_ward_{trigger}_{target}.pdf")
-                            sf.save(output_dir / f"subgroup_forest_ward_{trigger}_{target}.html")
-
-                    # By age group
-                    age_labels = df_test.loc[tested_mask, "AgeGroup"].values
-                    if age_labels is not None:
-                        age_summary = cf.get_cate_summary(X_tested, group_labels=age_labels)
-                        age_summary.to_csv(output_dir / f"cate_by_age_{trigger}_{target}.csv", index=False)
-
-                        if not age_summary.empty:
-                            sf_age = SubgroupForestPlot(
-                                age_summary,
-                                subgroup_col="group",
-                                estimate_col="mean_cate",
-                                ci_low_col="ci_low",
-                                ci_high_col="ci_high",
-                                title=f"CATE by Age Group: {trigger} → {target}",
-                            )
-                            sf_age.save(output_dir / f"subgroup_forest_age_{trigger}_{target}.png")
-                            sf_age.save(output_dir / f"subgroup_forest_age_{trigger}_{target}.pdf")
-                            sf_age.save(output_dir / f"subgroup_forest_age_{trigger}_{target}.html")
-
-                    logger.info("Causal forest analysis completed and plots saved.")
-        else:
-            logger.warning("Pipeline did not store test data – skipping causal forest. "
-                           "To enable, add the following to pipeline.py after run:\n"
-                           "self.df_test = df_test\n"
-                           "self.flags_test = flags_test\n"
-                           "self.esc_scores = esc_scores")
-    else:
-        logger.warning("No valid pairs for heterogeneity analysis.")
-
-    # ------------------------------------------------------------------
-    # 10. Generate all publication plots
-    # ------------------------------------------------------------------
-    # We need the policy and validation data for calibration plots.
-    # The pipeline's internal split: train/test within estimation set.
-    # We can retrieve the test set from pipeline's _df_test and _flags_test
-    # if we added getters. For now, we'll pass None and skip calibration plots.
-    generate_plots(
-        results,
-        output_dir,
-        phase1_df=phase1_df,
-        policy=pipeline.policy_ if hasattr(pipeline, "policy_") else None,
-        flags_val=None,   # would be pipeline._flags_test
-        df_val=None,      # would be pipeline._df_test
-    )
-
-    # ------------------------------------------------------------------
-    # 11. Time trend analysis (optional, compute yearly estimates)
-    # ------------------------------------------------------------------
-    years = sorted(estimation_df["Year"].dropna().unique())
-    yearly_results = []
-    for yr in years:
-        logger.info(f"Running yearly analysis for {yr}...")
-        yr_res = run_pipeline_for_year(estimation_df, estimation_flags, all_codes, pairs, yr, config)
-        if not yr_res.empty:
-            yearly_results.append(yr_res)
-
-    if yearly_results:
-        yearly_df = pd.concat(yearly_results, ignore_index=True)
-        yearly_df.to_csv(output_dir / "yearly_results.csv", index=False)
-
-        # For the top pair, create a time trend plot
-        if not yearly_df.empty and 'trigger' in locals():
-            top_pair_yearly = yearly_df[
-                (yearly_df["trigger"] == trigger) & (yearly_df["target"] == target) & (yearly_df["status"] == "ok")
-            ].copy()
-            if not top_pair_yearly.empty:
-                tt = TimeTrendPlot(
-                    top_pair_yearly,
-                    time_col="year",
-                    estimate_col="rd",
-                    se_col="se",
-                    title=f"Time Trend: {trigger} → {target}",
-                )
-                tt.save(output_dir / "time_trend.png")
-                tt.save(output_dir / "time_trend.pdf")
-                tt.save(output_dir / "time_trend.html")
-                logger.info("Time trend plot saved.")
-    else:
-        logger.warning("No yearly results generated.")
-
-    # ------------------------------------------------------------------
-    # 12. Create a combined figure (e.g., sensitivity contour + subgroup forest)
-    # ------------------------------------------------------------------
-    # This is optional; we create one if both sensitivity contour and subgroup forest exist.
-    sens_path = output_dir / "figures" / "sensitivity_contour.html"
-    sub_path = output_dir / f"subgroup_forest_ward_{trigger}_{target}.html"
-    if sens_path.exists() and sub_path.exists():
-        # Load the two figures (requires reading HTML, which is complex). Instead,
-        # we can recreate them as Plotly figures and combine.
-        # For simplicity, we'll note that you can combine saved images in a grid.
-        # Here we'll just print a message.
-        logger.info("Combined figure can be created manually from the saved plots.")
-        # In practice, you would regenerate the figures as Plotly objects and use CombinedFigure.
-
-    logger.info("Analysis complete.")
 
 
 # ----------------------------------------------------------------------
@@ -677,6 +255,423 @@ def generate_plots(results: pd.DataFrame, output_dir: Path, phase1_df: pd.DataFr
                     logger.info(f"Calibration plot for {target} saved.")
         except Exception as e:
             logger.error(f"Calibration plots failed: {e}")
+
+
+# ----------------------------------------------------------------------
+# Main function for one pathogen
+# ----------------------------------------------------------------------
+def analyze_one_pathogen(
+    loader: DataLoader,
+    filter_config_path: Path,
+    base_output_dir: Path,
+    base_config: RunConfig,
+):
+    """Run the full analysis for a single pathogen genus."""
+    logger.info(f"\n{'='*60}\nProcessing pathogen config: {filter_config_path.name}\n{'='*60}")
+
+    pathogen_name = filter_config_path.stem.replace("config_", "").replace("_", "").lower()
+    output_dir = base_output_dir / pathogen_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Load pathogen‑specific filter
+    filter_config = FilterConfig.from_json(str(filter_config_path))
+
+    # Apply filter to get cohort
+    df, meta = loader.get_cohort(
+        filter_config=filter_config,
+        apply_exclusions=True,
+        verbose=True,
+    )
+    if len(df) == 0:
+        logger.error(f"No isolates remaining for {filter_config_path.name}. Skipping.")
+        return
+
+    logger.info(f"Cohort loaded: {meta.n_rows} rows from {meta.n_labs} labs")
+    all_codes = sorted(loader.code_to_base.keys())
+    flags = loader.get_abx_flags(df, codes=all_codes, recode_mode="R_vs_nonR", drop_I=True)
+
+    # ------------------------------------------------------------------
+    # Split into discovery and estimation sets
+    # ------------------------------------------------------------------
+    group_col = "Anonymized_Lab"
+    groups = df[group_col].astype(str).fillna("NA").to_numpy()
+    gss = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=42)
+    discovery_idx, estimation_idx = next(gss.split(df.index, groups=groups))
+
+    discovery_df = df.iloc[discovery_idx].copy()
+    discovery_flags = flags.iloc[discovery_idx].copy()
+    estimation_df = df.iloc[estimation_idx].copy()
+    estimation_flags = flags.iloc[estimation_idx].copy()
+
+    logger.info(f"Discovery set: {len(discovery_df)} isolates from {discovery_df[group_col].nunique()} labs")
+    logger.info(f"Estimation set: {len(estimation_df)} isolates from {estimation_df[group_col].nunique()} labs")
+
+    # ------------------------------------------------------------------
+    # Phase 1 screening on discovery set
+    # ------------------------------------------------------------------
+    phase1_cfg = Phase1Config(
+        min_group=50,
+        min_trigger_tested=100,
+        crude_screening_threshold=0.05,
+        fdr_alpha=0.05,
+        exclude_targets_equal_trigger=True,
+    )
+    screener = Phase1Screener(phase1_cfg)
+
+    phase1_df = screener.run(
+        df=discovery_df,
+        flags=discovery_flags,
+        all_codes=all_codes,
+        top_n=100,
+    )
+
+    if phase1_df.empty:
+        logger.error("No pairs passed Phase 1 screening. Exiting for this pathogen.")
+        return
+
+    pairs = list(zip(phase1_df["trigger"], phase1_df["target"]))
+    logger.info(f"Selected {len(pairs)} pairs from Phase 1 screening")
+
+    # ------------------------------------------------------------------
+    # Run pipeline on estimation set
+    # ------------------------------------------------------------------
+    config = base_config  # already a RunConfig object
+    pipeline = CausalPipeline(config, n_jobs=4)
+    results = pipeline.run(
+        df=estimation_df,
+        flags=estimation_flags,
+        all_codes=all_codes,
+        pairs=pairs,
+    )
+
+    # Expose fitted policy (optional, for calibration plots)
+    pipeline.policy_ = pipeline._policy
+
+    # ------------------------------------------------------------------
+    # Save results and failure summary
+    # ------------------------------------------------------------------
+    save_results(
+        output_dir,
+        results,
+        config.model_dump(),
+        cohort_meta={
+            "name": meta.name,
+            "n_rows": meta.n_rows,
+            "n_labs": meta.n_labs,
+            "year_range": f"{meta.yearmonth_min} – {meta.yearmonth_max}",
+            "pathogen": meta.pathogen,
+        },
+    )
+    generate_failure_summary(results, output_dir)
+
+    # ------------------------------------------------------------------
+    # Export filtered cascade results
+    # ------------------------------------------------------------------
+    exporter = EscalationExporter(escalation_df=results)
+    exporter.filter(
+        p_threshold=0.05,
+        rd_min=0.05,
+        effect_direction="positive",
+        min_ess=50,
+        keep_failed=False,
+    )
+    export = exporter.export(str(output_dir), prefix=f"{pathogen_name}_escalation")
+    logger.info(f"Exported {export.metadata['stats']['n_pairs']} cascade edges.")
+
+    # ------------------------------------------------------------------
+    # Bayesian shrinkage for multiple comparisons
+    # ------------------------------------------------------------------
+    shrinkage_df = results[results["status"] == "ok"].copy()
+    shrinkage_df["pair"] = shrinkage_df["trigger"] + " → " + shrinkage_df["target"]
+    shrinkage_df = shrinkage_df.dropna(subset=["rd", "se"])
+
+    if len(shrinkage_df) > 1:
+        bs = BayesianShrinkage(random_seed=42, draws=2000, tune=1000, target_accept=0.99)
+        bs.fit(shrinkage_df, estimate_col="rd", se_col="se")
+        shrunk_summary = bs.summary()
+        shrunk_summary.to_csv(output_dir / "bayesian_shrinkage_summary.csv", index=False)
+
+        # Posterior probability plot
+        prob_plot = PosteriorProbabilityPlot(
+            shrunk_summary,
+            pair_col="pair",
+            prob_col="prob_positive",
+            title="Posterior Probability of Positive Escalation Effect",
+        )
+        prob_plot.save(output_dir / "posterior_prob.png", width=1000, height=800, scale=2)
+        prob_plot.save(output_dir / "posterior_prob.pdf")
+
+        # Shrinkage forest plot
+        shrink_forest = ShrinkageForestPlot(
+            shrunk_summary,
+            original_est_col="rd",
+            original_se_col="se",
+            shrunken_est_col="theta_shrunken",
+            shrunken_sd_col="theta_sd",
+            pair_col="pair",
+            title="Bayesian Shrinkage: Original vs. Shrunken Estimates",
+        )
+        shrink_forest.save(output_dir / "shrinkage_forest.png", width=1200, height=900, scale=2)
+        shrink_forest.save(output_dir / "shrinkage_forest.pdf")
+        shrink_forest.save(output_dir / "shrinkage_forest.html")
+        logger.info("Bayesian shrinkage plots saved.")
+    else:
+        logger.warning("Not enough valid pairs for Bayesian shrinkage.")
+
+    # ------------------------------------------------------------------
+    # Heterogeneity analysis with causal forest (for the top pair)
+    # ------------------------------------------------------------------
+    if not results[results["status"] == "ok"].empty:
+        valid = results[results["status"] == "ok"].copy()
+        top_idx = valid["rd"].abs().idxmax()
+        top_row = valid.loc[top_idx]
+        trigger, target = top_row["trigger"], top_row["target"]
+        logger.info(f"Running causal forest for top pair: {trigger} → {target}")
+
+        # Check if pipeline stored test data (requires modification in pipeline.py)
+        if hasattr(pipeline, "df_test") and hasattr(pipeline, "flags_test") and hasattr(pipeline, "esc_scores"):
+            df_test = pipeline.df_test
+            flags_test = pipeline.flags_test
+            esc_scores = pipeline.esc_scores
+
+            T_col = f"{trigger}_T"
+            if T_col not in flags_test.columns:
+                logger.error(f"Trigger column {T_col} missing in test flags.")
+            else:
+                tested_mask = flags_test[T_col].astype(int).to_numpy() == 1
+                if tested_mask.sum() == 0:
+                    logger.error("No tested isolates for trigger in test set.")
+                else:
+                    X = pipeline._encode_covariates(df_test, config.covariates.covariate_cols)
+                    X_tested = X[tested_mask]
+
+                    A = flags_test[f"{trigger}_R"].astype(int).to_numpy()[tested_mask]
+                    Y = esc_scores[target][tested_mask]
+
+                    # Testing model weights (recompute)
+                    if config.nuisance.use_joint_selection:
+                        from src.controllers.escalation_causal.nuisance.joint_selection import JointSelectionModel
+                        joint_model = JointSelectionModel(min_prob=config.tmle.min_prob)
+                        T_full = flags_test[T_col].astype(int).to_numpy()
+                        R_full = flags_test[f"{trigger}_R"].astype(int).to_numpy()
+                        joint_model.fit(X, T_full, R_full)
+                        p_test = joint_model.predict_p_test(X)
+                        w_full, _ = joint_model.compute_weights(p_test, tested_mask)
+                    else:
+                        from src.controllers.escalation_causal.nuisance.testing_model import TestingModel
+                        test_model = TestingModel(
+                            model_type=config.nuisance.testing_model,
+                            calibrate=config.nuisance.calibrate_testing,
+                            n_folds_cv=config.nuisance.testing_cv_folds,
+                            min_prob=config.tmle.min_prob,
+                            weight_cap_percentile=config.tmle.weight_cap_percentile,
+                        )
+                        test_model.fit(X, T_full)
+                        p_test = test_model.get_oof_predictions() if test_model._is_cross_fitted else test_model.predict_proba(X)
+                        w_full, _ = test_model.compute_weights(p_test, tested_mask)
+
+                    w = w_full[tested_mask]
+
+                    # Fit causal forest
+                    feature_names = get_covariate_names(config.covariates, df_test)
+                    cf = CausalForestWrapper(
+                        n_estimators=400,
+                        max_depth=20,
+                        min_samples_leaf=10,
+                        random_state=42,
+                    )
+                    cf.fit(X_tested, A, Y, sample_weight=w, feature_names=feature_names)
+
+                    # Variable importance
+                    imp = cf.feature_importances()
+                    imp_df = pd.DataFrame(list(imp.items()), columns=["feature", "importance"])
+                    imp_df.sort_values("importance", ascending=False).to_csv(output_dir / f"causal_forest_importance_{trigger}_{target}.csv", index=False)
+
+                    # Plot variable importance
+                    fig_imp = cf.plot_variable_importance(top_k=15)
+                    import matplotlib.pyplot as plt
+                    plt.tight_layout()
+                    plt.savefig(output_dir / f"causal_forest_importance_{trigger}_{target}.png", dpi=300, bbox_inches="tight")
+                    plt.savefig(output_dir / f"causal_forest_importance_{trigger}_{target}.pdf", bbox_inches="tight")
+                    plt.close()
+
+                    # CATE distribution
+                    fig_hist = cf.plot_cate_distribution(X_tested)
+                    plt.tight_layout()
+                    plt.savefig(output_dir / f"cate_distribution_{trigger}_{target}.png", dpi=300, bbox_inches="tight")
+                    plt.savefig(output_dir / f"cate_distribution_{trigger}_{target}.pdf", bbox_inches="tight")
+                    plt.close()
+
+                    # Subgroup summaries
+                    ward_labels = df_test.loc[tested_mask, "ARS_WardType"].values
+                    if ward_labels is not None:
+                        ward_summary = cf.get_cate_summary(X_tested, group_labels=ward_labels)
+                        ward_summary.to_csv(output_dir / f"cate_by_ward_{trigger}_{target}.csv", index=False)
+
+                        if not ward_summary.empty:
+                            sf = SubgroupForestPlot(
+                                ward_summary,
+                                subgroup_col="group",
+                                estimate_col="mean_cate",
+                                ci_low_col="ci_low",
+                                ci_high_col="ci_high",
+                                title=f"CATE by Ward Type: {trigger} → {target}",
+                            )
+                            sf.save(output_dir / f"subgroup_forest_ward_{trigger}_{target}.png")
+                            sf.save(output_dir / f"subgroup_forest_ward_{trigger}_{target}.pdf")
+                            sf.save(output_dir / f"subgroup_forest_ward_{trigger}_{target}.html")
+
+                    age_labels = df_test.loc[tested_mask, "AgeGroup"].values
+                    if age_labels is not None:
+                        age_summary = cf.get_cate_summary(X_tested, group_labels=age_labels)
+                        age_summary.to_csv(output_dir / f"cate_by_age_{trigger}_{target}.csv", index=False)
+
+                        if not age_summary.empty:
+                            sf_age = SubgroupForestPlot(
+                                age_summary,
+                                subgroup_col="group",
+                                estimate_col="mean_cate",
+                                ci_low_col="ci_low",
+                                ci_high_col="ci_high",
+                                title=f"CATE by Age Group: {trigger} → {target}",
+                            )
+                            sf_age.save(output_dir / f"subgroup_forest_age_{trigger}_{target}.png")
+                            sf_age.save(output_dir / f"subgroup_forest_age_{trigger}_{target}.pdf")
+                            sf_age.save(output_dir / f"subgroup_forest_age_{trigger}_{target}.html")
+
+                    logger.info("Causal forest analysis completed and plots saved.")
+        else:
+            logger.warning("Pipeline did not store test data – skipping causal forest. "
+                           "To enable, add the following to pipeline.py after run:\n"
+                           "self.df_test = df_test\n"
+                           "self.flags_test = flags_test\n"
+                           "self.esc_scores = esc_scores")
+    else:
+        logger.warning("No valid pairs for heterogeneity analysis.")
+
+    # ------------------------------------------------------------------
+    # Generate publication plots (excluding calibration)
+    # ------------------------------------------------------------------
+    generate_plots(
+        results,
+        output_dir,
+        phase1_df=phase1_df,
+        policy=pipeline.policy_ if hasattr(pipeline, "policy_") else None,
+        flags_val=None,   # would be pipeline._flags_test if available
+        df_val=None,      # would be pipeline._df_test
+    )
+
+    # ------------------------------------------------------------------
+    # Time trend analysis (optional)
+    # ------------------------------------------------------------------
+    years = sorted(estimation_df["Year"].dropna().unique())
+    yearly_results = []
+    for yr in years:
+        logger.info(f"Running yearly analysis for {yr}...")
+        yr_res = run_pipeline_for_year(estimation_df, estimation_flags, all_codes, pairs, yr, config)
+        if not yr_res.empty:
+            yearly_results.append(yr_res)
+
+    if yearly_results:
+        yearly_df = pd.concat(yearly_results, ignore_index=True)
+        yearly_df.to_csv(output_dir / "yearly_results.csv", index=False)
+
+        # For the top pair, create a time trend plot
+        if not yearly_df.empty and 'trigger' in locals():
+            top_pair_yearly = yearly_df[
+                (yearly_df["trigger"] == trigger) & (yearly_df["target"] == target) & (yearly_df["status"] == "ok")
+            ].copy()
+            if not top_pair_yearly.empty:
+                tt = TimeTrendPlot(
+                    top_pair_yearly,
+                    time_col="year",
+                    estimate_col="rd",
+                    se_col="se",
+                    title=f"Time Trend: {trigger} → {target}",
+                )
+                tt.save(output_dir / "time_trend.png")
+                tt.save(output_dir / "time_trend.pdf")
+                tt.save(output_dir / "time_trend.html")
+                logger.info("Time trend plot saved.")
+    else:
+        logger.warning("No yearly results generated.")
+
+    logger.info(f"Analysis for {filter_config_path.name} complete.\n")
+
+
+# ----------------------------------------------------------------------
+# Main entry point
+# ----------------------------------------------------------------------
+def main():
+    # Directory containing filter configs
+    config_dir = Path("./src/controllers/filters/")
+    filter_config_paths = list(config_dir.glob("config_*.json"))
+    if not filter_config_paths:
+        logger.error("No filter config files found.")
+        return
+
+    base_output_dir = Path("./output_multipathogen")
+    base_output_dir.mkdir(exist_ok=True)
+
+    # Base pipeline configuration (common to all pathogens)
+    base_config = RunConfig(
+        split=SplitConfig(
+            test_size=0.3,
+            split_group_col="Anonymized_Lab",
+            random_state=42,
+        ),
+        covariates=CovariateConfig(
+            covariate_cols=[
+                "Anonymized_Lab",
+                "ARS_WardType",
+                "AgeGroup",
+                "Year",
+            ],
+            min_count=200,
+            max_levels=25,
+            drop_first=True,
+        ),
+        policy=PolicyConfig(
+            context_cols=["Anonymized_Lab", "PathogengroupL1", "Year"],
+            method="empirical",
+            min_context_n=100,
+            model_type="xgb",
+            calibrate=True,
+            calibration_method="isotonic",
+            calibration_cv=5,
+        ),
+        nuisance=NuisanceConfig(
+            testing_model="xgb",
+            propensity_model="xgb",
+            outcome_model="xgb",
+            calibrate_testing=True,
+            calibrate_propensity=False,
+            calibrate_outcome=False,
+            testing_cv_folds=5,
+            use_joint_selection=True,
+            random_state=42,
+        ),
+        tmle=TMLEConfig(
+            n_folds=5,
+            min_prob=0.01,
+            weight_cap_percentile=99.0,
+            min_tested=200,
+            min_group=50,
+            stabilize_weights=True,
+            n_bootstrap=None,
+            alpha=0.05,
+        ),
+    )
+
+    # Load full dataset once (shared across pathogens)
+    data_path = "./datasets/structured/dataset_parquet"
+    loader = DataLoader(data_path, strict=False, normalize_on_load=True)
+
+    # Loop over each pathogen config
+    for cfg_path in filter_config_paths:
+        analyze_one_pathogen(loader, cfg_path, base_output_dir, base_config)
+
+    logger.info("All pathogen analyses completed.")
 
 
 if __name__ == "__main__":

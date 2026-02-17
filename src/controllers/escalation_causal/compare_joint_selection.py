@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """
-Comparison of causal estimates with and without joint selection model.
+Multi‑pathogen comparison of causal estimates with and without joint selection model.
 
-Runs the full pipeline twice:
-    - use_joint_selection = False (standard TestingModel)
-    - use_joint_selection = True  (JointSelectionModel)
-Then compares the risk difference estimates and saves a joint forest plot.
+For each pathogen genus (specified by a filter config JSON file):
+  - Loads the full dataset, applies the genus‑specific filter.
+  - Splits into discovery and estimation sets.
+  - Performs Phase 1 screening on discovery set.
+  - Runs the pipeline twice (with and without joint selection) on estimation set.
+  - Compares the estimates and generates a comparison plot.
+  - Saves all results in a genus‑specific subdirectory under a common output folder.
 
-Now with proper split for screening to avoid winner's curse.
+Usage:
+  python compare_joint_selection_multipathogen.py
 """
 
 import logging
@@ -49,7 +53,6 @@ logger = logging.getLogger(__name__)
 
 def run_with_flag(use_joint: bool, config_template: RunConfig, df, flags, all_codes, pairs, output_subdir: str) -> pd.DataFrame:
     """Run pipeline with given joint selection flag."""
-    # Create a copy of config and modify the flag
     config_dict = config_template.model_dump()
     config_dict["nuisance"]["use_joint_selection"] = use_joint
     modified_config = RunConfig(**config_dict)
@@ -57,7 +60,6 @@ def run_with_flag(use_joint: bool, config_template: RunConfig, df, flags, all_co
     pipeline = CausalPipeline(modified_config, n_jobs=4)
     results = pipeline.run(df, flags, all_codes, pairs)
 
-    # Save intermediate results
     out_dir = Path(output_subdir)
     save_results(
         out_dir,
@@ -71,7 +73,6 @@ def run_with_flag(use_joint: bool, config_template: RunConfig, df, flags, all_co
 
 def compare_results(res_false: pd.DataFrame, res_true: pd.DataFrame) -> pd.DataFrame:
     """Merge results from two runs for comparison."""
-    # Keep only successful estimates
     false_ok = res_false[res_false["status"] == "ok"][["trigger", "target", "rd", "ci_low", "ci_high"]].copy()
     true_ok = res_true[res_true["status"] == "ok"][["trigger", "target", "rd", "ci_low", "ci_high"]].copy()
 
@@ -93,8 +94,8 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
     import plotly.graph_objects as go
     from plotly.subplots import make_subplots
 
-    # Sort by absolute difference
     merged = merged.sort_values("rd_diff", ascending=False).reset_index(drop=True)
+    y_pos = list(range(len(merged)))
 
     fig = make_subplots(
         rows=2, cols=1,
@@ -102,8 +103,6 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
         shared_xaxes=True,
         vertical_spacing=0.15,
     )
-
-    y_pos = list(range(len(merged)))
 
     # Standard estimates
     fig.add_trace(go.Scatter(
@@ -142,11 +141,12 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
     ), row=1, col=1)
 
     # Difference bar chart
+    colors = ["red" if d > 0 else "blue" for d in merged["rd_diff"]]
     fig.add_trace(go.Bar(
         x=merged["rd_diff"],
         y=y_pos,
         orientation="h",
-        marker_color=["red" if d > 0 else "blue" for d in merged["rd_diff"]],
+        marker_color=colors,
         name="Difference",
         showlegend=False,
     ), row=2, col=1)
@@ -172,39 +172,37 @@ def plot_comparison(merged: pd.DataFrame, output_dir: Path):
     logger.info(f"Comparison plot saved to {output_dir}")
 
 
-def main():
-    # ------------------------------------------------------------------
-    # 1. Load and filter data
-    # ------------------------------------------------------------------
-    data_path = "./datasets/structured/dataset_parquet"
-    filter_config_path = "./src/controllers/filters/config_all_klebsiella.json"
+def compare_one_pathogen(
+    loader: DataLoader,
+    filter_config_path: Path,
+    base_output_dir: Path,
+    base_config: RunConfig,
+):
+    """Run the full comparison for a single pathogen genus."""
+    logger.info(f"\n{'='*60}\nProcessing pathogen config: {filter_config_path.name}\n{'='*60}")
 
-    loader = DataLoader(data_path, strict=False, normalize_on_load=True)
-    filter_config = FilterConfig.from_json(filter_config_path)
+    pathogen_name = filter_config_path.stem.replace("config_", "").replace("_", "").lower()
+    output_dir = base_output_dir / pathogen_name
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    filter_config = FilterConfig.from_json(str(filter_config_path))
 
     df, meta = loader.get_cohort(
         filter_config=filter_config,
         apply_exclusions=True,
         verbose=True,
     )
+    if len(df) == 0:
+        logger.error(f"No isolates remaining for {filter_config_path.name}. Skipping.")
+        return
+
     logger.info(f"Cohort loaded: {meta.n_rows} rows from {meta.n_labs} labs")
-
     all_codes = sorted(loader.code_to_base.keys())
-    logger.info(f"Total antibiotic codes: {len(all_codes)}")
+    flags = loader.get_abx_flags(df, codes=all_codes, recode_mode="R_vs_nonR", drop_I=True)
 
-    flags = loader.get_abx_flags(
-        df,
-        codes=all_codes,
-        recode_mode="R_vs_nonR",
-        drop_I=True,
-    )
-
-    # ------------------------------------------------------------------
-    # 2. Split data into discovery (screening) and estimation sets
-    #    Use group shuffle by laboratory to keep all isolates from a lab together.
-    # ------------------------------------------------------------------
+    # Split into discovery and estimation
     group_col = "Anonymized_Lab"
-    groups = df[group_col].astype("string").fillna("NA").to_numpy()
+    groups = df[group_col].astype(str).fillna("NA").to_numpy()
     gss = GroupShuffleSplit(n_splits=1, test_size=0.5, random_state=42)
     discovery_idx, estimation_idx = next(gss.split(df.index, groups=groups))
 
@@ -213,12 +211,7 @@ def main():
     estimation_df = df.iloc[estimation_idx].copy()
     estimation_flags = flags.iloc[estimation_idx].copy()
 
-    logger.info(f"Discovery set: {len(discovery_df)} isolates from {discovery_df[group_col].nunique()} labs")
-    logger.info(f"Estimation set: {len(estimation_df)} isolates from {estimation_df[group_col].nunique()} labs")
-
-    # ------------------------------------------------------------------
-    # 3. Phase 1 screening on discovery set only
-    # ------------------------------------------------------------------
+    # Phase 1 screening on discovery set
     phase1_cfg = Phase1Config(
         min_group=50,
         min_trigger_tested=100,
@@ -227,7 +220,6 @@ def main():
         exclude_targets_equal_trigger=True,
     )
     screener = Phase1Screener(phase1_cfg)
-
     phase1_df = screener.run(
         df=discovery_df,
         flags=discovery_flags,
@@ -236,15 +228,42 @@ def main():
     )
 
     if phase1_df.empty:
-        logger.error("No pairs passed Phase 1 screening. Exiting.")
+        logger.error("No pairs passed Phase 1 screening. Exiting for this pathogen.")
         return
 
     pairs = list(zip(phase1_df["trigger"], phase1_df["target"]))
-    logger.info(f"Selected {len(pairs)} pairs from Phase 1 screening (discovery set)")
+    logger.info(f"Selected {len(pairs)} pairs from Phase 1 screening")
 
-    # ------------------------------------------------------------------
-    # 4. Base configuration (without joint selection flag)
-    # ------------------------------------------------------------------
+    # Run both configurations on estimation set
+    # Without joint selection
+    logger.info("=== Running WITHOUT joint selection on estimation set ===")
+    res_false = run_with_flag(False, base_config, estimation_df, estimation_flags, all_codes, pairs, output_dir / "run_false")
+
+    # With joint selection
+    logger.info("=== Running WITH joint selection on estimation set ===")
+    res_true = run_with_flag(True, base_config, estimation_df, estimation_flags, all_codes, pairs, output_dir / "run_true")
+
+    # Compare and plot
+    merged = compare_results(res_false, res_true)
+    merged.to_csv(output_dir / "comparison_merged.csv", index=False)
+    logger.info(f"Merged comparison saved with {len(merged)} pairs.")
+
+    plot_comparison(merged, output_dir)
+    logger.info(f"Comparison for {filter_config_path.name} complete.\n")
+
+
+def main():
+    # Directory containing filter configs
+    config_dir = Path("./src/controllers/filters/")
+    filter_config_paths = list(config_dir.glob("config_*.json"))
+    if not filter_config_paths:
+        logger.error("No filter config files found.")
+        return
+
+    base_output_dir = Path("./comparison_multipathogen")
+    base_output_dir.mkdir(exist_ok=True)
+
+    # Base configuration (without joint selection flag; will be overridden)
     base_config = RunConfig(
         split=SplitConfig(
             test_size=0.3,
@@ -280,7 +299,7 @@ def main():
             calibrate_outcome=False,
             testing_cv_folds=5,
             random_state=42,
-            use_joint_selection=False,  # will be overridden in runs
+            use_joint_selection=False,  # will be overridden
         ),
         tmle=TMLEConfig(
             n_folds=5,
@@ -294,29 +313,14 @@ def main():
         ),
     )
 
-    # ------------------------------------------------------------------
-    # 5. Run both configurations on the estimation set
-    # ------------------------------------------------------------------
-    output_base = Path("./comparison_output")
-    output_base.mkdir(exist_ok=True)
+    # Load full dataset once
+    data_path = "./datasets/structured/dataset_parquet"
+    loader = DataLoader(data_path, strict=False, normalize_on_load=True)
 
-    # Without joint selection
-    logger.info("=== Running WITHOUT joint selection on estimation set ===")
-    res_false = run_with_flag(False, base_config, estimation_df, estimation_flags, all_codes, pairs, output_base / "run_false")
+    for cfg_path in filter_config_paths:
+        compare_one_pathogen(loader, cfg_path, base_output_dir, base_config)
 
-    # With joint selection
-    logger.info("=== Running WITH joint selection on estimation set ===")
-    res_true = run_with_flag(True, base_config, estimation_df, estimation_flags, all_codes, pairs, output_base / "run_true")
-
-    # ------------------------------------------------------------------
-    # 6. Compare and plot
-    # ------------------------------------------------------------------
-    merged = compare_results(res_false, res_true)
-    merged.to_csv(output_base / "comparison_merged.csv", index=False)
-    logger.info(f"Merged comparison saved with {len(merged)} pairs.")
-
-    plot_comparison(merged, output_base)
-    logger.info("Comparison complete.")
+    logger.info("All pathogen comparisons completed.")
 
 
 if __name__ == "__main__":

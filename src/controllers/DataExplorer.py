@@ -1,30 +1,9 @@
 """
-DataExplorer_v3.py (Corrected + Robust + Publication-ready + Cohesive Styling)
+DataExplorer_v4.py (Pathogen‑agnostic + Publication‑ready)
 
-WHAT’S NEW / FIXED (per your latest requests)
-1) FilterConfig integration retained (imports your existing FilterConfig)
-2) Robust boolean handling (bool / 0/1 / "true"/"false")
-3) Robust outcome handling (strip/upper, handles "R ", "r", etc.)
-4) Stage-by-stage audit logging
-5) Prevents analysis/plots when cohort is empty
-6) Fixes plot axis-title copy/paste bugs
-7) Larger text everywhere (titles, axis labels, ticks, legend, bar text)
-8) Color policy updated for publication consistency:
-   - If <= 3 categories -> distinct colors
-   - If > 3 categories -> cohesive color scheme:
-       * Bar charts: single consistent fill color (all bars same)
-       * Pie charts: monochrome shades of the same base color
-9) Age bars sorted by true age order (0 -> max, handles "≥95 years", "80-84 years", "0 years")
-10) Multi-format export (HTML, PNG, SVG, PDF) supported (requires kaleido for images)
-
-Requirements:
-    pip install pandas numpy plotly kaleido
-
-Usage:
-    explorer = DataExplorer(data_path="./data.parquet", filter_config=config)
-    explorer.run_analysis()
-    explorer.print_summary_report()
-    explorer.generate_plots(output_dir="./publication_figures", formats=["png","svg","html"])
+Adapted for multi‑pathogen analysis. Removes hardcoded E. coli references and
+uses a dynamic pathogen name supplied via the `pathogen_name` parameter.
+All filtering is delegated to the provided FilterConfig.
 """
 
 import pandas as pd
@@ -46,7 +25,7 @@ warnings.filterwarnings("ignore", message="This figure includes Axes that are no
 class DataExplorer:
     """
     Exploratory Data Analysis for ARS Surveillance Data.
-    Robust cohort selection + publication-ready Plotly figures + CSV export for reporting.
+    Now pathogen‑agnostic; pathogen name is provided at initialisation.
     """
 
     # Distinct colors for small-category plots (<=3 categories)
@@ -63,6 +42,7 @@ class DataExplorer:
         self,
         data_path: str,
         filter_config: Optional[FilterConfig] = None,
+        pathogen_name: str = "E. coli",   # new parameter for dynamic labelling
         palette_name: str = "publication_blue",
         required_covariates: Optional[List[str]] = None,
         drop_missing_covariates: bool = True,
@@ -76,6 +56,7 @@ class DataExplorer:
         self.export_formats = ["html", "png", "svg"]
 
         self.filter_config = filter_config
+        self.pathogen_name = pathogen_name   # store for dynamic titles
         self.palette_name = palette_name
 
         # Required covariates (rows missing any of these will be dropped)
@@ -110,7 +91,7 @@ class DataExplorer:
         self.save_tables_default = True
 
     # =========================================================================
-    # Robust coercion helpers
+    # Robust coercion helpers (unchanged)
     # =========================================================================
     def _coerce_bool_series(self, s: pd.Series) -> pd.Series:
         """Coerce bool-like series: bool, 0/1, 'true'/'false' -> boolean; unknown -> NaN."""
@@ -145,7 +126,7 @@ class DataExplorer:
         print(f"{stage}: {len(df):,} records ({pct:.1f}%)")
 
     # =========================================================================
-    # Cohesive color system (your requested rule)
+    # Cohesive color system (unchanged)
     # =========================================================================
     def _hex_to_rgb01(self, hex_color: str) -> Tuple[float, float, float]:
         hex_color = hex_color.lstrip("#")
@@ -192,14 +173,10 @@ class DataExplorer:
         return [self.PRIMARY] * n
 
     # =========================================================================
-    # Age sorting helpers
+    # Age sorting helpers (unchanged)
     # =========================================================================
     def _age_sort_key(self, label: Any) -> int:
-        """
-        Sort labels like:
-          '0 years', '80-84 years', '≥95 years'
-        Returns the lower-bound numeric age (>=95 -> 95).
-        """
+        """Sort labels like '0 years', '80-84 years', '≥95 years'."""
         if pd.isna(label):
             return 10**9
         s = str(label).strip()
@@ -219,7 +196,7 @@ class DataExplorer:
         return 10**9
 
     # =========================================================================
-    # Antibiotic column detection
+    # Antibiotic column detection (unchanged)
     # =========================================================================
     def _detect_antibiotic_columns(self) -> Dict[str, Dict]:
         antibiotics: Dict[str, Dict[str, Optional[str]]] = {}
@@ -245,14 +222,10 @@ class DataExplorer:
         }
 
     # =========================================================================
-    # Missing covariates handling
+    # Missing covariates handling (unchanged)
     # =========================================================================
     def _drop_missing_covariates(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Drop rows where ANY required covariate is missing.
-        Excludes antibiotic Tested/Outcome columns from the missingness rule.
-        Treats empty strings / whitespace as missing for string columns.
-        """
+        """Drop rows where ANY required covariate is missing."""
         if not self.drop_missing_covariates:
             return df
 
@@ -286,7 +259,7 @@ class DataExplorer:
         return df2
 
     # =========================================================================
-    # Load + filter
+    # Load + filter (pathogen filter removed – now only from FilterConfig)
     # =========================================================================
     def load_and_filter(self) -> pd.DataFrame:
         print("=" * 80)
@@ -328,6 +301,7 @@ class DataExplorer:
         base_n = len(self.raw_df)
         df = self.raw_df.copy()
 
+        # Apply the user‑supplied filter configuration (includes pathogen selection)
         if self.filter_config is not None:
             df, _ = self.filter_config.apply(df)
             self._stage_report("[AFTER FilterConfig]", df, base_n)
@@ -342,12 +316,9 @@ class DataExplorer:
         # Drop missing covariates early
         df = self._drop_missing_covariates(df)
 
-        # STAGE 1: Pathogen
-        if "Pathogen" in df.columns:
-            df = df[df["Pathogen"].astype(str).str.contains("Escherichia coli", case=False, na=False)]
-        self._stage_report("[STAGE 1] Pathogen = E. coli", df, base_n)
+        # STAGE 1: (removed hardcoded pathogen filter)
 
-        # STAGE 2: Year window
+        # STAGE 2: Year window (optional, can also be in filter_config)
         if "Year" in df.columns:
             df = df[df["Year"].between(2019, 2023)]
         self._stage_report("[STAGE 2] Year 2019–2023", df, base_n)
@@ -395,7 +366,7 @@ class DataExplorer:
         return self.filtered_df
 
     # =========================================================================
-    # Analyses
+    # Analyses (unchanged except where titles used)
     # =========================================================================
     def analyze_temporal(self) -> Optional[pd.DataFrame]:
         if self.filtered_df is None or self.filtered_df.empty or "Year" not in self.filtered_df.columns:
@@ -522,7 +493,6 @@ class DataExplorer:
 
         testing_df = pd.DataFrame(testing_stats)
 
-        # Sort highest -> lowest
         testing_df = testing_df.sort_values(
             ["Percentage Tested", "Count Tested", "Code"],
             ascending=[False, False, True],
@@ -533,7 +503,6 @@ class DataExplorer:
 
         self.metrics["testing"] = testing_df
         return testing_df
-
 
     def run_analysis(self) -> None:
         print("\n" + "=" * 80)
@@ -579,10 +548,9 @@ class DataExplorer:
                 print()
 
     # =========================================================================
-    # CSV table saving
+    # CSV table saving (unchanged)
     # =========================================================================
     def _save_table(self, df: pd.DataFrame, filename_base: str) -> None:
-        """Save a DataFrame as CSV alongside figures."""
         if self.output_dir is None:
             raise ValueError("output_dir is not set. Call generate_plots(output_dir=...) first.")
         if df is None or df.empty:
@@ -596,7 +564,7 @@ class DataExplorer:
             print(f"  ⚠ Failed to save {outpath.name}: {e}")
 
     # =========================================================================
-    # Plot export
+    # Plot export (unchanged)
     # =========================================================================
     def _save_figure(self, fig, filename_base: str, formats: Optional[List[str]] = None) -> None:
         if self.output_dir is None:
@@ -613,7 +581,7 @@ class DataExplorer:
                 if fmt_l == "html":
                     fig.write_html(outpath)
                 else:
-                    fig.write_image(outpath, width=width, height=height)  # kaleido required
+                    fig.write_image(outpath, width=width, height=height)
                 print(f"  ✓ Saved {outpath.name}")
             except Exception as e:
                 print(f"  ⚠ Failed to save {filename_base}.{fmt}: {e}")
@@ -649,11 +617,10 @@ class DataExplorer:
         self._plot_resistance_top(top_n=40, metric="%R", save_tables=save_tables)
         self._plot_yearly_ris_grid(top_n=20, sort_by="R (%)", save_tables=save_tables)
 
-
         print(f"\n✓ All outputs saved to: {self.output_dir}\n")
 
     # =========================================================================
-    # Plot styling helper
+    # Plot styling helper (unchanged)
     # =========================================================================
     def _apply_pub_layout(self, fig: go.Figure, title_html: str, margin: dict) -> None:
         fig.update_layout(
@@ -668,7 +635,7 @@ class DataExplorer:
         fig.update_yaxes(showgrid=False, zeroline=False)
 
     # =========================================================================
-    # Plotting (now also writes CSV tables)
+    # Plotting methods (titles now use self.pathogen_name)
     # =========================================================================
     def _plot_temporal(self, save_tables: bool = True) -> None:
         df = self.metrics.get("temporal")
@@ -693,7 +660,7 @@ class DataExplorer:
 
         self._apply_pub_layout(
             fig,
-            "<b>Temporal Distribution of <i>E. coli</i> Isolates (2019–2023)</b>",
+            f"<b>Temporal Distribution of <i>{self.pathogen_name}</i> Isolates (2019–2023)</b>",
             margin=dict(l=120, r=60, t=140, b=120),
         )
 
@@ -899,9 +866,7 @@ class DataExplorer:
 
         self._save_figure(fig, "05_demographics")
 
-    
     def _dynamic_height(self, n_bars: int, min_h=900, px_per_bar=44, max_h=3200):
-        """Compute figure height so all y-axis labels + annotations are visible."""
         return int(min(max(min_h, n_bars * px_per_bar), max_h))
 
     def _plot_testing_frequency(self, top_n: int = 20, save_tables: bool = True) -> None:
@@ -910,19 +875,12 @@ class DataExplorer:
             return
 
         df = df.head(int(top_n)).copy()
-
-        # Make sure it's sorted high -> low for plotting too
-        df = df.sort_values(
-            ["Percentage Tested", "Count Tested", "Code"],
-            ascending=[False, False, True],
-        )
+        df = df.sort_values(["Percentage Tested", "Count Tested", "Code"], ascending=[False, False, True])
 
         if save_tables:
             self._save_table(df, f"06_testing_frequency_top{top_n}")
 
-        # Short labels to prevent chart shifting
         df["Label"] = df["Code"]
-
         colors = self._colors_for_plot(len(df), kind="bar")
 
         fig = go.Figure()
@@ -933,7 +891,7 @@ class DataExplorer:
             text=df["Percentage Tested"].map(lambda v: f"{v:.1f}%"),
             textposition="outside",
             textfont=dict(size=self.bar_text_size),
-            cliponaxis=False,  # <-- IMPORTANT: prevent outside text clipping
+            cliponaxis=False,
             marker=dict(color=colors, line=dict(color="#111111", width=1.5)),
             customdata=np.stack([df["Name"], df["Count Tested"]], axis=1),
             hovertemplate=(
@@ -944,7 +902,6 @@ class DataExplorer:
             ),
         ))
 
-        # Force all y tick labels to show (prevents Plotly thinning at high N)
         fig.update_yaxes(
             autorange="reversed",
             automargin=True,
@@ -957,29 +914,18 @@ class DataExplorer:
         self._apply_pub_layout(
             fig,
             f"<b>Top {top_n} Antibiotics by Testing Frequency</b>",
-            margin=dict(l=260, r=140, t=140, b=120),  # <-- r increased for outside text
+            margin=dict(l=260, r=140, t=140, b=120),
         )
-
         fig.update_layout(height=self._dynamic_height(len(df)))
-
-        fig.update_xaxes(
-            title_text="Percentage Tested (%)",
-            title_font=self.label_font,
-            tickfont=self.tick_font,
-        )
-        fig.update_yaxes(
-            title_text="Antibiotic",
-            title_font=self.label_font,
-            tickfont=self.tick_font,
-        )
+        fig.update_xaxes(title_text="Percentage Tested (%)", title_font=self.label_font, tickfont=self.tick_font)
+        fig.update_yaxes(title_text="Antibiotic", title_font=self.label_font, tickfont=self.tick_font)
 
         self._save_figure(fig, f"06_testing_frequency_top{top_n}")
-
 
     def analyze_resistance_top(
         self,
         top_n: int = 40,
-        sort_by: str = "Tested (n)",  # or "%R" or "%Non-susceptible (R+I)"
+        sort_by: str = "Tested (n)",
     ) -> Optional[pd.DataFrame]:
         if self.filtered_df is None or self.filtered_df.empty or not self.antibiotic_columns:
             return None
@@ -1020,12 +966,10 @@ class DataExplorer:
 
         res_df = pd.DataFrame(rows)
 
-        # Validate sort_by
         allowed = {"Tested (n)", "%R", "%Non-susceptible (R+I)"}
         if sort_by not in allowed:
             raise ValueError(f"sort_by must be one of {sorted(allowed)}")
 
-        # Sort highest -> lowest, with stable tie-breakers
         res_df = res_df.sort_values(
             [sort_by, "Tested (n)", "Code"],
             ascending=[False, False, True],
@@ -1035,11 +979,11 @@ class DataExplorer:
         self.metrics["resistance_top_sort_by"] = sort_by
         self.metrics["resistance_top_n"] = int(top_n)
         return res_df
-  
+
     def _plot_resistance_top(
         self,
         top_n: int = 40,
-        metric: str = "%R",  # or "%Non-susceptible (R+I)"
+        metric: str = "%R",
         save_tables: bool = True,
     ) -> None:
         df = self.metrics.get("resistance_top")
@@ -1049,11 +993,7 @@ class DataExplorer:
         if metric not in df.columns:
             raise ValueError(f"metric must be one of {list(df.columns)}")
 
-        df = (
-            df.sort_values([metric, "Tested (n)", "Code"], ascending=[False, False, True])
-            .head(int(top_n))
-            .copy()
-        )
+        df = df.sort_values([metric, "Tested (n)", "Code"], ascending=[False, False, True]).head(int(top_n)).copy()
 
         if save_tables:
             self._save_table(
@@ -1061,9 +1001,7 @@ class DataExplorer:
                 f"07_resistance_top{top_n}_{metric.replace('%','pct').replace(' ','_').replace('+','plus')}"
             )
 
-        # Keep axis label short to avoid huge left margin / squeezed plot
         df["Label"] = df["Code"]
-
         colors = self._colors_for_plot(len(df), kind="bar")
 
         fig = go.Figure()
@@ -1074,7 +1012,7 @@ class DataExplorer:
             text=df[metric].map(lambda v: f"{v:.1f}%"),
             textposition="outside",
             textfont=dict(size=self.bar_text_size),
-            cliponaxis=False,  # <-- IMPORTANT: prevents outside text from being clipped
+            cliponaxis=False,
             marker=dict(color=colors, line=dict(color="#111111", width=1.5)),
             customdata=np.stack(
                 [df["Name"], df["Tested (n)"], df["R (n)"], df["I (n)"], df["S (n)"]],
@@ -1089,7 +1027,6 @@ class DataExplorer:
             ),
         ))
 
-        # Force all labels to be shown (prevents Plotly dropping ticks at high N)
         fig.update_yaxes(
             autorange="reversed",
             automargin=True,
@@ -1101,25 +1038,18 @@ class DataExplorer:
 
         title_metric = "Resistant (%R)" if metric == "%R" else "Non-susceptible (R+I)"
 
-        # Give a bit more right margin for outside text; dynamic height for 40 bars
         self._apply_pub_layout(
             fig,
-            f"<b><i>E. coli</i> {title_metric} — Top {top_n} Antibiotics</b>",
-            margin=dict(l=260, r=140, t=140, b=120),  # <-- r increased
+            f"<b><i>{self.pathogen_name}</i> {title_metric} — Top {top_n} Antibiotics</b>",
+            margin=dict(l=260, r=140, t=140, b=120),
         )
-
         fig.update_layout(height=self._dynamic_height(len(df)))
-
         fig.update_xaxes(
             title_text=f"{title_metric} among tested (%)",
             title_font=self.label_font,
             tickfont=self.tick_font
         )
-        fig.update_yaxes(
-            title_text="Antibiotic",
-            title_font=self.label_font,
-            tickfont=self.tick_font
-        )
+        fig.update_yaxes(title_text="Antibiotic", title_font=self.label_font, tickfont=self.tick_font)
 
         safe_metric = (
             metric.replace("%", "pct")
@@ -1128,31 +1058,17 @@ class DataExplorer:
                 .replace("(", "")
                 .replace(")", "")
         )
-        self._save_figure(fig, f"07_ecoli_{safe_metric}_top{top_n}")
+        self._save_figure(fig, f"07_{self.pathogen_name.lower().replace(' ', '_')}_{safe_metric}_top{top_n}")
 
     def analyze_yearly_ris_top(
         self,
         top_n: int = 10,
         years: Optional[List[int]] = None,
-        selection: str = "global_top",   # "global_top" | "top_per_year" | "custom"
-        sort_by: str = "Tested (n)",     # "Tested (n)" | "R (%)" | "Non-susceptible (R+I) (%)"
+        selection: str = "global_top",
+        sort_by: str = "Tested (n)",
         custom_codes: Optional[List[str]] = None,
         min_tested: int = 1,
     ) -> Optional[pd.DataFrame]:
-        """
-        Build a long table with counts and percentages of R/I/S by Year and Antibiotic,
-        then select antibiotics to keep using a clear selection strategy.
-
-        selection:
-        - "global_top": pick ONE fixed set of top_n antibiotics across all years (best for year comparisons)
-        - "top_per_year": pick top_n antibiotics independently per year (panels may differ; exploratory)
-        - "custom": use custom_codes as the fixed set
-
-        sort_by:
-        - "Tested (n)" (recommended default; stable)
-        - "R (%)"
-        - "Non-susceptible (R+I) (%)"
-        """
         if self.filtered_df is None or self.filtered_df.empty or not self.antibiotic_columns:
             return None
         if "Year" not in self.filtered_df.columns:
@@ -1213,22 +1129,16 @@ class DataExplorer:
         if sort_by not in allowed_sort:
             raise ValueError(f"sort_by must be one of {sorted(allowed_sort)}")
 
-        # -------------------------------------------
-        # Selection strategy: decide which antibiotics to keep
-        # -------------------------------------------
         if selection == "custom":
             if not custom_codes:
                 raise ValueError("custom_codes must be provided when selection='custom'")
-            keep_codes = list(dict.fromkeys([str(c).strip().upper() for c in custom_codes]))  # preserve order, unique
+            keep_codes = list(dict.fromkeys([str(c).strip().upper() for c in custom_codes]))
             out = out[out["Code"].isin(keep_codes)].copy()
-
-            # enforce custom order
             order_map = {code: i for i, code in enumerate(keep_codes)}
             out["__order"] = out["Code"].map(order_map)
             out = out.sort_values(["Year", "__order"]).drop(columns="__order")
 
         elif selection == "global_top":
-            # Weighted ranking across all years (reviewer-friendly)
             agg = (
                 out.groupby(["Code", "Name"], as_index=False)
                 .agg({
@@ -1245,15 +1155,11 @@ class DataExplorer:
             keep_codes = agg["Code"].tolist()
 
             out = out[out["Code"].isin(keep_codes)].copy()
-
-            # enforce global order across all years
             order_map = {code: i for i, code in enumerate(keep_codes)}
             out["__order"] = out["Code"].map(order_map)
             out = out.sort_values(["Year", "__order"]).drop(columns="__order")
 
-
         elif selection == "top_per_year":
-            # select top_n per year (may differ by year)
             out = (
                 out.sort_values(["Year", sort_by, "Tested (n)", "Code"], ascending=[True, False, False, True])
                 .groupby("Year", as_index=False, group_keys=False)
@@ -1274,12 +1180,12 @@ class DataExplorer:
         top_n: int = 10,
         selection: str = "global_top",
         sort_by: str = "Tested (n)",
-        metric_stack: str = "RIS",  # "RIS" | "NS_vs_S"
+        metric_stack: str = "RIS",
         years: Optional[List[int]] = None,
         custom_codes: Optional[List[str]] = None,
         save_tables: bool = True,
-        label_mode: str = "pct_counts",   # "counts" | "pct_counts" | "none"
-        label_min_pct: float = 6.0,       # only label segments >= this % to avoid clutter
+        label_mode: str = "pct_counts",
+        label_min_pct: float = 6.0,
     ) -> None:
         df = self.metrics.get("yearly_ris_top")
 
@@ -1336,7 +1242,6 @@ class DataExplorer:
             title_suffix = "S/I/R (%) Among Tested"
         elif metric_stack == "NS_vs_S":
             stack_cols = ["S (%)", "Non-susceptible (R+I) (%)"]
-            # build NS counts from R+I
             legend_labels = {
                 "S (%)": "Susceptible (S)",
                 "Non-susceptible (R+I) (%)": "Non-susceptible (R+I)",
@@ -1346,7 +1251,6 @@ class DataExplorer:
         else:
             raise ValueError("metric_stack must be 'RIS' or 'NS_vs_S'")
 
-        # Consistent order across years if selection is global_top/custom
         if selection in {"global_top", "custom"}:
             first_year = years_list[0]
             order_codes = df[df["Year"] == first_year]["Code"].tolist()
@@ -1355,14 +1259,12 @@ class DataExplorer:
             order_map = None
 
         def _make_text(pct, n, denom):
-            # pct is numeric, n & denom ints
             if label_mode == "none":
                 return ""
             if pct < float(label_min_pct):
                 return ""
             if label_mode == "counts":
                 return f"{n}/{denom}"
-            # pct_counts
             return f"{pct:.1f}%\n({n}/{denom})"
 
         for idx, y in enumerate(years_list):
@@ -1370,19 +1272,14 @@ class DataExplorer:
             cc = idx % ncols + 1
 
             dyy = df[df["Year"] == y].copy()
-
-            # Create labels FIRST (fixes KeyError)
             dyy["Label"] = dyy["Code"]
 
-            # Apply ordering BEFORE annotation so annotations align with displayed order
             if order_map is not None:
                 dyy["__order"] = dyy["Code"].map(order_map).fillna(10**9)
                 dyy = dyy.sort_values("__order").drop(columns="__order")
             else:
                 dyy = dyy.sort_values(["Tested (n)", "Code"], ascending=[False, True])
 
-            # Add denominator annotations (n=...) AFTER ordering
-            # Use subplot row/col refs (more robust than idx+1)
             x_ref = "x" if (rr == 1 and cc == 1) else f"x{idx+1}"
             y_ref = "y" if (rr == 1 and cc == 1) else f"y{idx+1}"
 
@@ -1397,23 +1294,19 @@ class DataExplorer:
                     align="left",
                 )
 
-
             if order_map is not None:
                 dyy["__order"] = dyy["Code"].map(order_map).fillna(10**9)
                 dyy = dyy.sort_values("__order").drop(columns="__order")
             else:
                 dyy = dyy.sort_values(["Tested (n)", "Code"], ascending=[False, True])
 
-            # For NS_vs_S we need NS counts per row
             if metric_stack == "NS_vs_S":
                 dyy["Non-susceptible (R+I) (n)"] = dyy["R (n)"] + dyy["I (n)"]
 
             for col in stack_cols:
-                # Determine numerator counts for this segment
                 if metric_stack == "RIS":
                     num = dyy[count_cols[col]].astype(int).tolist()
                 else:
-                    # NS_vs_S
                     if col == "S (%)":
                         num = dyy["S (n)"].astype(int).tolist()
                     else:
@@ -1421,8 +1314,6 @@ class DataExplorer:
 
                 denom = dyy["Tested (n)"].astype(int).tolist()
                 pct_vals = dyy[col].astype(float).tolist()
-
-                # Build in-bar text labels (with denom)
                 text_labels = [_make_text(p, n, d) for p, n, d in zip(pct_vals, num, denom)]
 
                 fig.add_trace(
@@ -1468,7 +1359,6 @@ class DataExplorer:
                 automargin=True,
                 row=rr, col=cc
             )
-            # fig.update_xaxes(range=[0, 100], ticksuffix="%", automargin=True, row=rr, col=cc)
             fig.update_xaxes(range=[0, 115], ticksuffix="%", automargin=True, row=rr, col=cc)
 
         fig.update_layout(
@@ -1478,7 +1368,7 @@ class DataExplorer:
             paper_bgcolor=self.paper_bg,
             plot_bgcolor=self.plot_bg,
             title=dict(
-                text=f"<b><i>E. coli</i> — {title_suffix}, by Year ({selection}, top {top_n})</b>",
+                text=f"<b><i>{self.pathogen_name}</i> — {title_suffix}, by Year ({selection}, top {top_n})</b>",
                 x=0.5, xanchor="center", font=self.title_font
             ),
             legend=dict(
@@ -1487,47 +1377,9 @@ class DataExplorer:
                 y=-0.08, yanchor="top",
                 font=self.legend_font
             ),
-            # margin=dict(l=140, r=60, t=120, b=160),
             margin=dict(l=160, r=260, t=140, b=180),
             height=max(1000, self._dynamic_height(top_n) * nrows),
             width=max(self.fig_width, 1800),
         )
 
         self._save_figure(fig, f"08_yearly_RIS_grid_{selection}_top{top_n}")
-
-
-
-# ============================================================================
-# MAIN (Example)
-# ============================================================================
-if __name__ == "__main__":
-    config = FilterConfig.from_dict({
-        "name": "E. coli Inpatient Analysis",
-        "description": "E. coli, first isolates, inpatient only, 2020-2023",
-        "filters": [
-            {"column": "Pathogen", "operator": "equals", "value": "Escherichia coli"},
-            {"column": "CSQ", "operator": "equals", "value": "Erstisolat"},
-            {"column": "ARS_WardType", "operator": "in", "values": ["Normal Ward", "Intensive Care Unit"]},
-            {"column": "CareType", "operator": "in", "values": ["In-Patient", "Out-Patient"]},
-            {"column": "Year", "operator": "range", "min": 2020, "max": 2023},
-            {"column": "TotalAntibioticsTested", "operator": "gte", "value": 3},
-            {"column": "IsSpecificlyExcluded_Screening", "operator": "is_false"},
-            {"column": "IsSpecificlyExcluded_Pathogen", "operator": "is_false"},
-        ],
-        "verbose": True,
-    })
-
-    explorer = DataExplorer(
-        data_path="./data.parquet",
-        filter_config=config,
-        required_covariates=["CareType", "ARS_WardType", "Sex", "AgeRange", "AgeGroup"],
-        drop_missing_covariates=True,
-    )
-
-    explorer.run_analysis()
-    explorer.print_summary_report()
-    explorer.generate_plots(
-        output_dir="./publication_figures",
-        formats=["html", "png", "svg"],
-        save_tables=True,  # <- NEW
-    )

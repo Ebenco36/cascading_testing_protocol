@@ -733,7 +733,9 @@ def run_data_pipeline():
 
     parquet_dir = "./datasets/structured/dataset_parquet/"
     loader = DataLoader(parquet_dir, pathogen_groups_regex=ALL_PATHOGENS)  # ensure DataLoader reads parquet dirs
-    df = loader.get_combined(return_which="outcome")
+    # df = loader.get_combined(return_which="outcome")
+    df = loader.df
+
 
     save_parquet_flat(df=df, out_dir="./datasets/WHO_Aware_data", rows_per_file=250_000)
     

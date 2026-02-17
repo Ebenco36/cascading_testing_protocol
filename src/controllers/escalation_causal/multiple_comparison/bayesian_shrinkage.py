@@ -21,6 +21,7 @@ from typing import Optional, Dict, Any, Tuple
 
 import numpy as np
 import pandas as pd
+from scipy import stats
 
 logger = logging.getLogger(__name__)
 
@@ -160,18 +161,21 @@ class BayesianShrinkage:
         if not self._fitted:
             raise RuntimeError("Model not fitted.")
 
-        # Extract posterior of theta
-        theta_posterior = az.extract(self._trace, var_names=["theta"]).values  # shape (n_draws, n_pairs)
-        theta_mean = theta_posterior.mean(axis=0)
-        theta_sd = theta_posterior.std(axis=0)
-        prob_pos = (theta_posterior > 0).mean(axis=0)
+        # Extract posterior of theta: shape (n_pairs, n_samples)
+        theta_posterior = az.extract(self._trace, var_names=["theta"]).values
+
+        # Compute per-pair summaries: mean over samples (axis=1)
+        theta_mean = theta_posterior.mean(axis=1)
+        theta_sd = theta_posterior.std(axis=1)
+        prob_pos = (theta_posterior > 0).mean(axis=1)
 
         # Combine with original data
         df_out = self._data.copy()
         df_out["theta_shrunken"] = theta_mean
         df_out["theta_sd"] = theta_sd
         df_out["prob_positive"] = prob_pos
-        df_out["p_value"] = 2 * (1 - stats.norm.cdf(abs(df_out["rd"] / df_out["se"])))  # approximate
+        # Approximate p-value (two-sided) – safe only if se > 0 (already filtered in caller)
+        df_out["p_value"] = 2 * (1 - stats.norm.cdf(abs(df_out["rd"] / df_out["se"])))
         return df_out
 
     def plot_posterior_intervals(
